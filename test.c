@@ -15,6 +15,8 @@
 #define NUM_LOOP 100
 //#define DEBUG
 
+#define LINUX // activate linux specific code
+
 //declare a global mutex
 //an array to store lock contention time
 double time_in_cs[NUM_THREADS];
@@ -114,7 +116,9 @@ int main (int argc, char *argv[])
 	srand(time(NULL));
 	int i= 0;
 	double contention_time = 0;
+	#ifdef LINUX
 	cpu_set_t cpuset[NUM_THREADS]; //for setting affinity of the threads
+	#endif
 	int s;
 	for(i = 0; i < NUM_EXPERIMENTS; i++)
 	{
@@ -152,6 +156,7 @@ printf("printing inter arrival time %d: %lf\n",t,inter_arrival_time[t]);
 				;
 			}
 		}
+#ifdef LINUX
 		//set the affinity of threads
 		for(t = 0; t < NUM_THREADS; t++){
 			CPU_ZERO(&cpuset[t]);	
@@ -160,6 +165,7 @@ printf("printing inter arrival time %d: %lf\n",t,inter_arrival_time[t]);
 			if (s != 0)
 				printf("pthread_setaffinity_np error of thread %d\n",t);
 		}
+#endif
 		/* Wait on the other threads */
 		for(t=0; t<NUM_THREADS; t++)
 		{
