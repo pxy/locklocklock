@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+# requires installing argparse package.
+
 from argparse import ArgumentParser,FileType
 import os,sys,math
 from itertools import imap
