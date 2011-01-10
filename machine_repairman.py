@@ -14,7 +14,9 @@ def hm(rho,m):
     return hm2
 
 def mach_rep(lam_lo=1000, lam_hi=1000, mu_lo=1000, mu_hi=1000, m_lo=8, m_hi=8,step=100):
-
+    """does the computation of the waiting times according to the machine repairman queueing model.
+    Varies from lambda_low to lambda_hi etc.
+    """
     for m in range(m_lo, m_hi+1):
         for i in range(lam_lo, lam_hi+1, step):
             for j in range(mu_lo, mu_hi+1, step):
@@ -53,6 +55,7 @@ def main():
     if options.debug:
         print >> sys.stderr, "options:", options
 
+    # maybe not optimal, will not necessarily generate values for the borders of the range.
     if options.steps:
         options.stepsize = (options.ls[1] - options.ls[0])/options.steps
     if options.stepsize == 0: options.stepsize = 1
