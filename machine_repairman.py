@@ -41,7 +41,7 @@ def main():
     parser.add_argument("-v", dest="verbose", action="store_true", default=False,
                         help="prints verbose data, in the format: wait time, no. threads, lambda, mu")
 
-    parser.add_argument("--steps",          dest="steps", nargs='?',
+    parser.add_argument("--steps",          dest="steps", type=int, nargs='?',
                         help="no. of steps in total.")
     parser.add_argument("-s", "--stepsize", dest="stepsize", type=int, nargs='?', default=1000,
                         help="the stride size for both lambda and mu values. Default: 1000.")
@@ -62,7 +62,11 @@ def main():
 
     # maybe not optimal, will not necessarily generate values for the borders of the range.
     if options.steps:
-        options.stepsize = (options.ls[1] - options.ls[0])/options.steps
+	if options.ls and options.ls[1] > options.ls[0]:
+	    options.stepsize = (options.ls[1] - options.ls[0])/(options.steps - 1)
+	elif options.ms and options.ms[1] > options.ms[0]:
+	    options.stepsize = (options.ms[1] - options.ms[0])/(options.steps - 1)
+	    
     if options.stepsize == 0: options.stepsize = 1
 
     
