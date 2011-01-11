@@ -3,15 +3,17 @@
 # requires installing argparse package.
 
 from argparse import ArgumentParser,FileType
-import os,sys,math
+import os,sys,math,operator
 from itertools import imap
 
+def factorial(n):
+	return reduce(operator.mul,xrange(2,n+1),1)
 
 def hm(rho,m):
     """return a function that will take one argument k <= m + 1
     """
     def hm2(k):
-        return rho**(k-1)*math.factorial(m)/math.factorial(m-k+1)
+        return rho**(k-1)*factorial(m)/factorial(m-k+1)
 
     return hm2
 
@@ -28,8 +30,8 @@ def mach_rep(lam_lo=1000, lam_hi=1000, mu_lo=1000, mu_hi=1000, m_lo=8, m_hi=8,st
                 xs = map(hm(rho,m),range(1,m+1))
                 pi0 = 1.0/sum(xs)
                 response = float(m)/(lp_mu*(1.0-pi0)) - 1.0/lp_lam
-                if options.verbose :print '{0} {1} {2} {3}'.format(response, m, lp_lam, lp_mu)
-                else: print '{0} {1}'.format(response, m)
+                if options.verbose :print response, m, lp_lam, lp_mu
+                else: print response, m
     
 def main():
     global options
