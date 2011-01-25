@@ -33,7 +33,26 @@ def mach_rep(lam_lo=1000, lam_hi=1000, mu_lo=1000, mu_hi=1000, m_lo=8, m_hi=8,st
                 response = float(m)/(lp_mu*(1.0-pi0)) - 1.0/lp_lam
                 if options.verbose :print response, m, lp_lam, lp_mu
                 else: print response, m
-    
+
+def mach_rep_d(lam_lo=1000, lam_hi=1000, mu_lo=1000, mu_hi=1000, m_lo=8, m_hi=8,step=100):
+	"""does the computation of the waiting times according to the machine repairman queueing model with deterministic service time and arrival rate. Varies from lambda_low to lambda_hi etc.
+	"""
+    	for m in range(m_lo, m_hi+1):
+        	for i in range(lam_lo, lam_hi+1, step):
+            		for j in range(mu_lo, mu_hi+1, step):
+				lp_lam = float(i)
+				lp_mu = float(j)
+				eo = 1/lp_lam
+				ws = 1/lp_mu
+				z = eo/ws
+				if (m-1)*lp_lam < lp_mu: 
+					response = ws
+				else: 
+					rho = 1
+					response = m/lp_mu - eo
+                		if options.verbose :print response, m, lp_lam, lp_mu
+                		else: print response, m
+  
 def main():
     global options
     parser = ArgumentParser()
@@ -54,6 +73,9 @@ def main():
     parser.add_argument("-d", "--debug",
                       action="store_true", dest="debug", default=False,
                       help="print debug information")
+    parser.add_argument("--deterministic",
+                      action="store_true", dest="deterministic", default=False,
+                      help="Set the service time and arrival rate to be deterministic")
 
     options = parser.parse_args()
 
@@ -70,7 +92,12 @@ def main():
     if options.stepsize == 0: options.stepsize = 1
 
     
-    mach_rep(m_lo=options.ts[0], m_hi=options.ts[1], step=options.stepsize,
+    if options.deterministic:
+    	mach_rep_d(m_lo=options.ts[0], m_hi=options.ts[1], step=options.stepsize,
+             lam_lo=options.ls[0], lam_hi=options.ls[1],
+             mu_lo=options.ms[0], mu_hi=options.ms[1])
+    else:
+    	mach_rep(m_lo=options.ts[0], m_hi=options.ts[1], step=options.stepsize,
              lam_lo=options.ls[0], lam_hi=options.ls[1],
              mu_lo=options.ms[0], mu_hi=options.ms[1])
             
