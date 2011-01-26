@@ -1,0 +1,7 @@
+n_threads_start=2
+n_threads_end=8
+path_to_save=./deterministic
+if_deterministic=1
+mu_start=100
+mu_end=1000000
+step=10
