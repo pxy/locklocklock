@@ -3,7 +3,7 @@
 # requires installing argparse package.
 
 from argparse import ArgumentParser,FileType
-import os,sys,operator
+import os,sys,operator,math
 
 def factorial(n):
     """The factorial function. Included to make it work on old python versions
@@ -52,7 +52,51 @@ def mach_rep_d(lam_lo=1000, lam_hi=1000, mu_lo=1000, mu_hi=1000, m_lo=8, m_hi=8,
 					response = m/lp_mu - eo
                 		if options.verbose :print response, m, lp_lam, lp_mu
                 		else: print response, m
+def cal_bn(lam,mu,n):
+	if n == 0:
+		result = 1.0
+		return result
+	else:
+		result = 1.0
+		for i in range(1,n+1): 
+			result *= (math.exp(lam*i/mu) - 1.0)
+		return result 
   
+def mach_rep_m_d_1 (lam_lo=1000, lam_hi=1000, mu_lo=1000, mu_hi=1000, m_lo=8, m_hi=8,step=100):
+	"""does the computation of the waiting times according to the machine repairman queueing model with exponential arrival time and constant service time. Varies from labmda_low to lambda_hi etc.
+	"""
+    	for m in range(m_lo, m_hi+1):
+        	for i in range(lam_lo, lam_hi+1, step):
+            		for j in range(mu_lo, mu_hi+1, step):
+				lp_lam = float(i)
+				lp_mu = float(j)
+				eo = 1.0/lp_lam
+				ws = 1.0/lp_mu
+				sum = 0.0
+				for n in range(0,m):
+					sum += (float(factorial(m-1))/float((factorial(n)*factorial(m-1-n))))*cal_bn(lp_lam,lp_mu,n)
+				p0 = 1.0/(1.0 + (m*ws/eo)*sum) 
+				response = m*ws/(1.0-p0) - eo
+                		if options.verbose :print response, m, lp_lam, lp_mu
+                		else: print response, m
+
+def probabilistic_model (lam_lo=1000, lam_hi=1000, mu_lo=1000, mu_hi=1000, m_lo=8, m_hi=8,step=100):
+	"""does the computation of the waiting times with the probabilistic model given by "Modeling critical sections in amdahl's law and its implications for multicore design"
+	"""
+    	for m in range(m_lo, m_hi+1):
+        	for i in range(lam_lo, lam_hi+1, step):
+            		for j in range(mu_lo, mu_hi+1, step):
+				lp_lam = float(i)
+				lp_mu = float(j)
+				ncs = 1.0/lp_lam
+				cs =  1.0/lp_mu
+				fcs =  cs/(ncs + cs)
+				fncs = ncs/(ncs + cs)
+				response = fcs*(fcs + fncs/m)
+                		if options.verbose :print response, m, lp_lam, lp_mu
+                		else: print response, m
+				
+
 def main():
     global options
     parser = ArgumentParser()
@@ -76,6 +120,12 @@ def main():
     parser.add_argument("--deterministic",
                       action="store_true", dest="deterministic", default=False,
                       help="Set the service time and arrival rate to be deterministic")
+    parser.add_argument("--fixmu",
+                      action="store_true", dest="fixmu", default=False,
+                      help="Set the service time to be deterministic")
+    parser.add_argument("--probab",
+                      action="store_true", dest="probab", default=False,
+                      help="Set the model to be the probabilistic model by the paper Modeling Critical Sections in Amdahl's Law and its Implications for Multicore Design")
 
     options = parser.parse_args()
 
@@ -90,17 +140,24 @@ def main():
 	    options.stepsize = (options.ms[1] - options.ms[0])/(options.steps - 1)
 	    
     if options.stepsize == 0: options.stepsize = 1
-
     
     if options.deterministic:
     	mach_rep_d(m_lo=options.ts[0], m_hi=options.ts[1], step=options.stepsize,
              lam_lo=options.ls[0], lam_hi=options.ls[1],
              mu_lo=options.ms[0], mu_hi=options.ms[1])
     else:
-    	mach_rep(m_lo=options.ts[0], m_hi=options.ts[1], step=options.stepsize,
+    	if options.fixmu:
+		mach_rep_m_d_1 (m_lo=options.ts[0], m_hi=options.ts[1], step=options.stepsize,
+             	lam_lo=options.ls[0], lam_hi=options.ls[1],
+             	mu_lo=options.ms[0], mu_hi=options.ms[1])
+    	elif options.probab:
+		probabilistic_model(m_lo=options.ts[0], m_hi=options.ts[1], step=options.stepsize,
              lam_lo=options.ls[0], lam_hi=options.ls[1],
              mu_lo=options.ms[0], mu_hi=options.ms[1])
-            
+	else: 
+    		mach_rep(m_lo=options.ts[0], m_hi=options.ts[1], step=options.stepsize,
+             	lam_lo=options.ls[0], lam_hi=options.ls[1],
+             	mu_lo=options.ms[0], mu_hi=options.ms[1])
 
     sys.exit(0)
        
