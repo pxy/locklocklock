@@ -133,7 +133,7 @@ int main(void)
 	double diff = abs_value(time_in_cs[0] - time_in_cs[1])/n;
 	printf("The difference of the time to get one lock is : %.9f (%f) cycles\n",diff,diff*CPU_FREQ); //this is assuming there are only two processors (needs to be changed if there are more)
 	pthread_spin_destroy(spinlock_ptr);
-	numa_free(spinlock_ptr,sizeof(pthread_spinlock_t));
+	numa_free((void *)spinlock_ptr,sizeof(pthread_spinlock_t));
 	pthread_exit(NULL);
 	return 0;
 }
