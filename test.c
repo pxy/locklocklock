@@ -7,17 +7,20 @@
 #include <unistd.h>
 #include <assert.h>
 #include <time.h>
+//#include "tsc.h"
 
 //#define DEBUG
-#define NUM_THREADS 4
+#define FIX_TIME
+#define NUM_THREADS 8
 #define PRNG_BUFSZ 32
 #define E 2.71828
 #define SECOND_TO_USECOND 1000000
-#define SERVICE_MIU 100
-#define NUM_EXPERIMENTS 1
-#define NUM_LOOP 100
-#define NUM_HEAD_LOOP 0
+//#define SERVICE_MIU 100
+#define NUM_LOOP 500
+#define NUM_HEAD_LOOP 100
+#define NUM_TAIL_LOOP 150 
 #define USE_SPINLOCK
+#define EXPERIMENT_TIME_IN_SEC 60 
 #define LINUX // activate linux specific code
 
 //For the padding of the thread parameters structure
@@ -28,13 +31,21 @@ pthread_spinlock_t spinlock;
 #else
 pthread_mutex_t sum_lock;
 #endif 
+
+#ifdef FIX_TIME
+struct timespec start_experiment_time;
+#endif
+
 int wait_flag ;
+int SERVICE_MIU = 0;
 
 double time_in_cs[NUM_THREADS];
 double ex_time[NUM_THREADS]; 
 double experiment_time;
 pthread_mutex_t sum_lock;
 double service_time_sum[NUM_THREADS];
+int num_lock_access = 0;
+int num_access_each_thread[NUM_THREADS];
 
 struct lock_unlock_time
 {
@@ -48,7 +59,7 @@ typedef struct
 	int thread_id;
 	struct random_data* rand_states;
 	int arrival_lambda;
-	char padding[CACHE_LINE_SIZE-2*sizeof(int)-sizeof(struct random_data*)];
+	//char padding[CACHE_LINE_SIZE-2*sizeof(int)-sizeof(struct random_data*)];
 }thread_params;
 
 //Given a randomly generated rand, convert a uniform distribution into an exponenetial distribution
@@ -64,7 +75,9 @@ double time_diff(struct timespec *start,struct timespec *end)
 
 void *work(void *thread_arg)
 {
+#ifndef FIX_TIME
 	int i;
+#endif
 	thread_params *thread_param = (thread_params *)thread_arg;
 	double service_time, arrival_time;
 	//get the parameters from thread_param
@@ -74,14 +87,24 @@ void *work(void *thread_arg)
 	
 	//try timespec
 	struct timespec start_idle,start_lock_attempt,start,end_cs,get_lock;
-	
-	//printf("The size of time_t: %lu \n",sizeof(time_t));
+#ifdef FIX_TIME
+	struct timespec end_experiment_time; 
+	if(clock_gettime(CLOCK_MONOTONIC,&end_experiment_time)!=0)
+		{
+			printf("get end experiment time monotonic time error\n");
+			exit(-1);
+		}
+#endif
 	while(!wait_flag) //If we are using spinlock, we need to wait until all threads are created
 	{
 		;
 	}
 
+#ifdef FIX_TIME
+	while(time_diff(&start_experiment_time,&end_experiment_time) < EXPERIMENT_TIME_IN_SEC) 
+#else	
 	for(i = 0; i < NUM_LOOP; i++)
+#endif
 	{
 		int r;
 		//generate a random number according to the arrival lambda
@@ -93,8 +116,7 @@ void *work(void *thread_arg)
 		random_r(arg, &r);
 		//if(i == 0)
 		arrival_time = exp_rand(arrival_lambda,r);
-		//else
-			//arrival_time = 1/(double)arrival_lambda;
+		//arrival_time = 1/(double)arrival_lambda;
 		if(clock_gettime(CLOCK_MONOTONIC,&start_lock_attempt) != 0)
 		{
 			printf("get monotonic time error\n");
@@ -109,9 +131,8 @@ void *work(void *thread_arg)
 			}
 		}
 
-		//assert(time_diff(&start_idle,&start_lock_attempt) - arrival_time > 0.0001)
 #ifdef DEBUG
-		printf("trylock %lf %d\n",(start_lock_attempt.tv_sec + start_lock_attempt.tv_nsec*1e-9),tid);
+		//printf("trylock %lf %d\n",(start_lock_attempt.tv_sec + start_lock_attempt.tv_nsec*1e-9),tid);
 		//printf("Idling time: %lf\n",(time_diff(&start_idle,&start_lock_attempt)));
 		if(time_diff(&start_idle,&start_lock_attempt) - arrival_time > 0.0001)
 			printf("Actual idling time and generated arrival time difference: %lf\n",(time_diff(&start_idle,&start_lock_attempt) - arrival_time));
@@ -132,13 +153,13 @@ void *work(void *thread_arg)
 			exit(-1);
 		}
 #ifdef DEBUG
-		printf("acquirelock %lf %d\n",(get_lock.tv_sec + get_lock.tv_nsec*1e-9),tid);
+		//printf("acquirelock %lf %d\n",(get_lock.tv_sec + get_lock.tv_nsec*1e-9),tid);
 		timestamps[i][tid].lock_time.tv_sec = start_lock_attempt.tv_sec ;
 		timestamps[i][tid].lock_time.tv_nsec = start_lock_attempt.tv_nsec*1e-9;
 #endif
-
 		random_r(arg, &r);
 		service_time = exp_rand(SERVICE_MIU,r);
+		//service_time = 1/(double)SERVICE_MIU;
 		service_time_sum[tid] += service_time;
 
 		if(clock_gettime(CLOCK_MONOTONIC,&start) != 0)
@@ -151,7 +172,6 @@ void *work(void *thread_arg)
 			printf("get monotonic time error\n");
 			exit(-1);
 		}
-
 		while(time_diff(&start,&end_cs) < service_time)
 		{
 			if(clock_gettime(CLOCK_MONOTONIC,&end_cs)!=0)
@@ -160,7 +180,7 @@ void *work(void *thread_arg)
 				exit(-1);
 			}
 		}
-		assert(time_diff(&start,&end_cs) >= service_time);
+		//assert(time_diff(&start,&end_cs) >= service_time);
 #ifdef USE_SPINLOCK
 		pthread_spin_unlock(&spinlock);
 #else
@@ -180,11 +200,21 @@ void *work(void *thread_arg)
 		timestamps[i][tid].unlock_time.tv_sec = end_cs.tv_sec ;
 		timestamps[i][tid].unlock_time.tv_nsec = end_cs.tv_nsec*1e-9;
 #endif
-
+#ifdef FIX_TIME
+		if(clock_gettime(CLOCK_MONOTONIC,&end_experiment_time)!=0)
+		{
+			printf("get end experiment time monotonic time error\n");
+			exit(-1);
+		}
+		num_lock_access++;
+		num_access_each_thread[tid]++;
+		time_in_cs[tid] +=  time_diff(&start_lock_attempt,&end_cs);
+#else
 		//Store the difference of the start and end critical section time
-		if(i > NUM_HEAD_LOOP) //don't include the first NUM_HEAD_LOOP critical section time
+		if(i < NUM_LOOP - NUM_TAIL_LOOP) //don't include the first NUM_TAIL_LOOP critical section time
 			time_in_cs[tid] +=  time_diff(&start_lock_attempt,&end_cs);
-		assert(time_diff(&start_lock_attempt,&end_cs) >= service_time);
+#endif
+		//assert(time_diff(&start_lock_attempt,&end_cs) >= service_time);
 	}
 	pthread_exit(NULL);
 }
@@ -222,16 +252,23 @@ int main (int argc, char *argv[])
 	for(i = 0; i < NUM_THREADS; i++)
 	{
 		service_time_sum[i] = 0;
+		num_access_each_thread[i] = 0;
 	}
-	if(argc < 2)
+	if(argc < 3)
 	{
-		printf("Usage: ./test arrival_lambda\n");
+		printf("Usage: ./test arrival_lambda service_rate\n");
 		exit(-1);
 	}
 	arrival_lambda = atoi(argv[1]);
+	SERVICE_MIU = atoi(argv[2]);
 
-	for(i = 0; i < NUM_EXPERIMENTS; i++)
-	{
+#ifdef FIX_TIME
+		if(clock_gettime(CLOCK_MONOTONIC,&start_experiment_time)!=0)
+		{
+			printf("get start experiment time monotonic time error\n");
+			exit(-1);
+		}
+#endif
 		sum = 0;
 		struct timeval tim; double t1,t2; //for timing one experiment
 		gettimeofday(&tim, NULL);
@@ -282,30 +319,62 @@ int main (int argc, char *argv[])
 #endif
 		gettimeofday(&tim, NULL);
 		t2 = tim.tv_sec*SECOND_TO_USECOND + tim.tv_usec;
+		/*#ifdef DEBUG
+		  printf("The experiment took %.6lf microseconds.\n", t2-t1);
+		  for(t=0; t<NUM_THREADS; t++){
+		  printf("Time in cs: for thread %d: %lf \n",t,time_in_cs[t]);
+		  printf("Execution time for thread %d: %lf \n",t,ex_time[t]); 
+		  }
+#endif*/
+	#ifdef FIX_TIME
+		double sum_of_square = 0.0;
+		assert(num_lock_access > 0);
+		for(t = 0; t < NUM_THREADS; t++)
+			assert(num_access_each_thread[t] > 0);
+	#endif
 
 		for(t = 0; t < NUM_THREADS; t++)
 		{
-			printf("Response time for thread %d: %lf\n",t,time_in_cs[t]/(double)(NUM_LOOP-NUM_HEAD_LOOP));
+	#ifdef FIX_TIME
+			//printf("Response time for thread %d: %lf\n",t,time_in_cs[t]/(double)num_access_each_thread[t]);
+			//printf("The number of accessed thread %d made is %d\n",t,num_access_each_thread[t]);
+	#else
+			printf("Response time for thread %d: %lf\n",t,time_in_cs[t]/(double)(NUM_LOOP-NUM_TAIL_LOOP));
+	#endif
 			sum += time_in_cs[t];
 		}
-		printf("Average response time for lambda %d: %f\n",arrival_lambda,sum/((double)NUM_THREADS*(NUM_LOOP - NUM_HEAD_LOOP)));
+	#ifdef FIX_TIME
 		for(t = 0; t < NUM_THREADS; t++)
 		{
-			printf("The serivce time for thread: %d: %lf\n",t,service_time_sum[t]/(double)(NUM_LOOP-NUM_HEAD_LOOP)); 
+			sum_of_square += (time_in_cs[t]/(double)num_access_each_thread[t])* (time_in_cs[t]/(double)num_access_each_thread[t]);
 		}
-		int j,k;
-		for(t = 0; t < NUM_THREADS; t++)
-		{
-			for(i = 0; i < NUM_LOOP; i++)
-			{
-				for(k = 0; k < NUM_THREADS && k != t ; k++)
-				{
-					for(j = 0; j < NUM_LOOP; j++)
-						if(time_diff(&(timestamps[j][k].lock_time),&(timestamps[i][t].lock_time)) > 0)
-							assert (time_diff(&(timestamps[j][k].lock_time),&(timestamps[i][t].unlock_time)) > 0);
-				}
-			}
-		}
-	}
+		printf("Average response time for lambda %d, mu %d: %f , variance: %f \n",arrival_lambda,SERVICE_MIU,sum/((double)num_lock_access),sum_of_square/(double)NUM_THREADS-(sum/(double)num_lock_access)*(sum/(double)num_lock_access)); 
+		//printf("Sum of square: %f\n",sum_of_square);
+		//printf("Square average: %f\n",sum_of_square/(double)NUM_THREADS);
+		//printf("Average square:%f\n",(sum/(double)num_lock_access)*(sum/(double)num_lock_access));
+		//printf("Variance: %f\n",sum_of_square/(double)NUM_THREADS-(sum/(double)num_lock_access)*(sum/(double)num_lock_access));
+	#else
+		printf("Average response time for lambda %d: %f\n",arrival_lambda,sum/((double)NUM_THREADS*(NUM_LOOP - NUM_TAIL_LOOP)));
+	#endif
+		/*
+		   for(t = 0; t < NUM_THREADS; t++)
+		   {
+		   printf("The serivce time for thread: %d: %lf\n",t,service_time_sum[t]/(double)(NUM_LOOP-NUM_TAIL_LOOP)); 
+		   }
+		 */
+		/*
+		   int j,k;
+		   for(t = 0; t < NUM_THREADS; t++)
+		   {
+		   for(i = 0; i < NUM_LOOP; i++)
+		   {
+		   for(k = 0; k < NUM_THREADS && k != t ; k++)
+		   {
+		   for(j = 0; j < NUM_LOOP; j++)
+		   if(time_diff(&(timestamps[j][k].lock_time),&(timestamps[i][t].lock_time)) > 0)
+		   assert (time_diff(&(timestamps[j][k].lock_time),&(timestamps[i][t].unlock_time)) > 0);
+		   }
+		   }
+		   }*/
 	pthread_exit(NULL);
 }
