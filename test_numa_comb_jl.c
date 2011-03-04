@@ -12,7 +12,7 @@
 
 #define N_THREADS 8
 #define CPU_FREQ 2270000000
-#define EXPERIMENT_TIME_IN_SEC 2
+#define EXPERIMENT_TIME_IN_SEC 5
 
 #define S_TO_N 1000000000
 
@@ -58,8 +58,7 @@ timestamp g_tss[MAX_N_ACCESS*N_THREADS]; //global timestamps
 
 void *work(void *thread_arg)
 {
-	while(!start_work_flag)
-		;
+	int num_access = 0;
 	thread_params *thread_param = (thread_params*)thread_arg;
 	int tid = thread_param->thread_id;
 	//double service_time = 0.001; // 1e-3
@@ -70,32 +69,35 @@ void *work(void *thread_arg)
 	int count = 0;
 	set_affinity(threads[tid], &cpuset[tid]);
 	uint64_t start_time = read_tsc_fenced();
-	uint experiment_time = EXPERIMENT_TIME_IN_SEC*CPU_FREQ;
+	long experiment_time = EXPERIMENT_TIME_IN_SEC*CPU_FREQ;
 	uint64_t start = read_tsc_fenced();	
 
+
+	while(!start_work_flag)
+		;
 
 	while(read_tsc_fenced() - start_time < experiment_time) 
 	{
 	    start = read_tsc_fenced();
 	    while(read_tsc_fenced() - start < cycles_in_wait)
 		;
-	    uint64_t getlock_time = read_tsc();
+	    uint64_t getlock_time = read_tsc_fenced();
 
 	    dprintf("Thread %d trying to get the lock at %lu \n",tid,getlock_time);
 	    pthread_spin_lock(thread_param->spinlock_ptr);	
-	    dprintf("Thread %d got the lock at %lu \n",tid,read_tsc());
+
 
 	    /************The critical section***************/
 	    uint64_t get_in_cs_time = read_tsc_fenced();
+	    dprintf("Thread %d got the lock at %lu \n",tid, get_in_cs_time);
 	    //get_lock_time[access_count] = get_in_cs_time;
 	    tss[count++].ts = get_in_cs_time;
-	    num_access_each_thread[tid]++;
+	    num_access++;
 	    while(read_tsc_fenced() - get_in_cs_time < cycles_in_wait)
 	    {
 	    }
 
 	    tss[count++].ts =  read_tsc_fenced();
-		//access_count++;
 		
 	    pthread_spin_unlock(thread_param->spinlock_ptr);
                 /************End the critical section***************/		
@@ -107,8 +109,9 @@ void *work(void *thread_arg)
 	}
 
 	// make sure all threads have finished before fiddling with the spinlock again
-
 	pthread_barrier_wait (&fin_barrier);
+
+	num_access_each_thread[tid] = num_access;
 
 	//when the experiment is done, write to the global timestamp array
 	pthread_spin_lock(thread_param->spinlock_ptr);	
@@ -218,7 +221,6 @@ int main(int argc, char *argv[])
 		printf("The number of lock accesses for thread %d is : %d\n",i,num_access_each_thread[i]);
 	}
 	*/
-	//printf("The difference of the time to get one lock is : %.9f (%f cycles)\n",diff,diff*CPU_FREQ); //this is assuming there are only two processors (needs to be changed if there are more)
 
 	//printf("printing the get lock and release lock time:\n");
 	qsort((void*)g_tss,(size_t)access_count,(size_t)sizeof(timestamp),cmp_timestamp);
@@ -226,6 +228,12 @@ int main(int argc, char *argv[])
 	for (i = 0; i < access_count; i++)
 		printf("%lu with id %d\n",g_tss[i].ts,g_tss[i].id);
 	*/
+
+	for (i = 0; i < access_count; i++)
+	{
+	    printf ("%lu %d\n", g_tss[i].ts, g_tss[i].id);
+	}
+
 	for (i = 1; i < access_count - 2; i+=2)
 	{
 		double d = (double)(g_tss[i+1].ts - g_tss[i].ts);
