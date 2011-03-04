@@ -12,11 +12,15 @@
 
 #define N_THREADS 8
 #define CPU_FREQ 2270000000
-#define EXPERIMENT_TIME_IN_SEC 1
-#define MAX_N_ACCESS 100000
+#define EXPERIMENT_TIME_IN_SEC 2
+
 #define S_TO_N 1000000000
 
-#define DEBUG 0
+#define L2_CACHE 262144
+
+#define MAX_N_ACCESS (L2_CACHE/sizeof(uint64_t))
+
+// #define DEBUG
 
 
 #ifdef DEBUG
@@ -35,8 +39,9 @@
     } while (0)
 
 
-//function prototypes
+/*********** GLOBALS ************/
 
+pthread_barrier_t fin_barrier;
 
 double time_in_cs[N_THREADS];
 int num_access_each_thread[N_THREADS];
@@ -44,6 +49,7 @@ volatile int start_work_flag = 0;
 pthread_t threads[N_THREADS];
 cpu_set_t cpuset[N_THREADS];
 int access_count = 0;
+
 
 
 timestamp g_tss[MAX_N_ACCESS*N_THREADS]; //global timestamps
@@ -56,42 +62,54 @@ void *work(void *thread_arg)
 		;
 	thread_params *thread_param = (thread_params*)thread_arg;
 	int tid = thread_param->thread_id;
-	double sevice_time = 0.001;
+	//double service_time = 0.001; // 1e-3
+	long cycles_in_service = CPU_FREQ/1000;
+	int cycles_in_wait = cycles_in_service/2;
 	//int initial_loop_flag = 1;
 	timestamp tss[MAX_N_ACCESS]; //timsstampes
 	int count = 0;
 	set_affinity(threads[tid], &cpuset[tid]);
-	uint64_t start_time = read_tsc();
-	while(read_tsc() - start_time < EXPERIMENT_TIME_IN_SEC*CPU_FREQ) 
+	uint64_t start_time = read_tsc_fenced();
+	uint experiment_time = EXPERIMENT_TIME_IN_SEC*CPU_FREQ;
+	uint64_t start = read_tsc_fenced();	
+
+
+	while(read_tsc_fenced() - start_time < experiment_time) 
 	{
-		uint64_t start = read_tsc();
-		while(read_tsc() - start < sevice_time*CPU_FREQ/2)
-			;
-		uint64_t getlock_time = read_tsc();
+	    start = read_tsc_fenced();
+	    while(read_tsc_fenced() - start < cycles_in_wait)
+		;
+	    uint64_t getlock_time = read_tsc();
 
-		dprintf("Thread %d trying to get the lock at %lu \n",tid,getlock_time);
-		pthread_spin_lock(thread_param->spinlock_ptr);	
-		dprintf("Thread %d got the lock at %lu \n",tid,read_tsc());
+	    dprintf("Thread %d trying to get the lock at %lu \n",tid,getlock_time);
+	    pthread_spin_lock(thread_param->spinlock_ptr);	
+	    dprintf("Thread %d got the lock at %lu \n",tid,read_tsc());
 
-		/************The critical section***************/
-		uint64_t get_in_cs_time = read_tsc();
-		//get_lock_time[access_count] = get_in_cs_time;
-		tss[count++].ts = get_in_cs_time;
-		num_access_each_thread[tid]++;
-		while(read_tsc() - get_in_cs_time < sevice_time*CPU_FREQ)
-		{
-		}
+	    /************The critical section***************/
+	    uint64_t get_in_cs_time = read_tsc_fenced();
+	    //get_lock_time[access_count] = get_in_cs_time;
+	    tss[count++].ts = get_in_cs_time;
+	    num_access_each_thread[tid]++;
+	    while(read_tsc_fenced() - get_in_cs_time < cycles_in_wait)
+	    {
+	    }
 
-		tss[count++].ts =  read_tsc();
+	    tss[count++].ts =  read_tsc_fenced();
 		//access_count++;
 		
-		pthread_spin_unlock(thread_param->spinlock_ptr);
+	    pthread_spin_unlock(thread_param->spinlock_ptr);
                 /************End the critical section***************/		
-                //uint64_t end_cs_time = read_tsc();
+	    uint64_t end_cs_time = read_tsc_fenced();
 
-		dprintf("Thread %d released the lock at %lu \n",tid, tss[count - 1]);
-		//time_in_cs[tid] +=  (end_cs_time - getlock_time)/(double)CPU_FREQ;
+
+	    dprintf("Thread %d released the lock at %lu \n",tid, tss[count - 1]);
+	    time_in_cs[tid] +=  (end_cs_time - getlock_time)/(double)CPU_FREQ;
 	}
+
+	// make sure all threads have finished before fiddling with the spinlock again
+
+	pthread_barrier_wait (&fin_barrier);
+
 	//when the experiment is done, write to the global timestamp array
 	pthread_spin_lock(thread_param->spinlock_ptr);	
 
@@ -146,6 +164,8 @@ int main(int argc, char *argv[])
 
 	thread_params para[n_threads]; //The parameters to pass to the threads
 
+	
+
 	//printf("The return value of numa_get_run_node_mask(void) is %d\n",numa_get_run_node_mask());
 	//printf("The return value of numa_max_node(void) is %d\n",numa_max_node());
 	//numa_tonode_memory((void *)spinlock_ptr,sizeof(pthread_spinlock_t),node_id); //This doesn't work
@@ -153,7 +173,20 @@ int main(int argc, char *argv[])
 	//initilize the spinlock pointer and put it on a specific node
 	pthread_spinlock_t *spinlock_ptr = numa_alloc_onnode(sizeof(pthread_spinlock_t),node_id);
 
-	E (spinlock_ptr);
+	if(spinlock_ptr == NULL) //error handling of the allocating of a spinlock pointer on a specific node
+	{
+		printf("alloc of spinlock on a node failed.\n");
+	}
+	else
+	{
+		printf("alloc of spinlock on a node succeeded.\n");
+	}
+
+
+	/* initialise final barrier */
+	
+	pthread_barrier_init(&fin_barrier, NULL, n_threads);
+
 	
 	//initlize spinlock
 	pthread_spin_init(spinlock_ptr,0);
@@ -175,6 +208,9 @@ int main(int argc, char *argv[])
 	{
 		pthread_join(threads[i],NULL);
 	}
+
+	pthread_barrier_destroy(&fin_barrier);
+
 	/*
 	for(i = 0; i < n_threads; i++)
 	{
@@ -227,13 +263,13 @@ int main(int argc, char *argv[])
 					delay_matrix[i][j] += (g_tss[2*k+2].ts - g_tss[2*k+1].ts); 
 					if(is_on_same_node(i, j, n_threads, n_left, n_right))
 					{
-						printf("local_delay: %lu\n",(g_tss[2*k+2].ts - g_tss[2*k+1].ts));
+						dprintf("local_delay: %lu\n",(g_tss[2*k+2].ts - g_tss[2*k+1].ts));
 						local_square += (g_tss[2*k+2].ts - g_tss[2*k+1].ts)*(g_tss[2*k+2].ts - g_tss[2*k+1].ts); 
 						local_count2++;
 					}
 					else
 					{
-						printf("remote_delay: %lu\n",(g_tss[2*k+2].ts - g_tss[2*k+1].ts));
+						dprintf("remote_delay: %lu\n",(g_tss[2*k+2].ts - g_tss[2*k+1].ts));
 						remote_square += (g_tss[2*k+2].ts - g_tss[2*k+1].ts)*(g_tss[2*k+2].ts - g_tss[2*k+1].ts); 
 						remote_count2++;
 					}
