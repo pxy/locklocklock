@@ -5,11 +5,11 @@
 
 #if defined(__x86_64__)
 
-static inline uint64_t
+static inline uint64_t __attribute__((always_inline))
 read_tsc()
 {
    uint64_t tsc;
-   asm ("rdtsc\n"
+   __asm__ ("rdtsc\n"
 	 "shl $32, %%rdx\n"
 	 "or %%rdx, %%rax"
 	 : "=a"(tsc)
@@ -18,11 +18,25 @@ read_tsc()
    return tsc;
 }
 
-static inline uint64_t
+static inline uint64_t __attribute__((always_inline))
+read_tsc_p()
+{
+   uint64_t tsc;
+   __asm__ ("rdtscp\n"
+	 "shl $32, %%rdx\n"
+	 "or %%rdx, %%rax"
+	 : "=a"(tsc)
+	 :
+	 : "rdx");
+   return tsc;
+}
+
+
+static inline uint64_t  __attribute__((always_inline))
 read_tsc_fenced()
 {
    uint64_t tsc;
-   asm ("lfence\n"
+   __asm__ ("lfence\n"
 	 "rdtsc\n"
 	 "shl $32, %%rdx\n"
 	 "or %%rdx, %%rax"
@@ -32,26 +46,18 @@ read_tsc_fenced()
    return tsc;
 }
 
-#elif defined(__i386__)
-
-static inline uint64_t
-read_tsc()
+__inline__ uint64_t 
+read_tsc_cpuid() 
 {
-   uint32_t eax, edx;
-   asm ("rdtsc\n"
-	 : "=a"(eax), "=d"(edx));
-   return ((uint64_t)edx << 32) | eax;
+    uint32_t lo, hi;
+    __asm__ __volatile__ (      // serialize
+    "xorl %%eax,%%eax \n        cpuid"
+    ::: "%rax", "%rbx", "%rcx", "%rdx");
+    /* We cannot use "=A", since this would use %rax on x86_64 */
+    __asm__ __volatile__ ("rdtsc" : "=a" (lo), "=d" (hi));
+    return (uint64_t)hi << 32 | lo;
 }
 
-static inline uint64_t
-read_tsc_fenced()
-{
-   uint32_t eax, edx;
-   asm ("lfence\n"
-	 "rdtsc\n"
-	 : "=a"(eax), "=d"(edx));
-   return ((uint64_t)edx << 32) | eax;
-}
 
 #else
 
