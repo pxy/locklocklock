@@ -16,8 +16,10 @@ typedef struct
 	int id;
 } timestamp;
 
+extern int sqr (int x);
 extern int is_on_same_node(int i, int j, int n, int left, int right);
 extern void set_affinity(pthread_t thread, const cpu_set_t *cpuset);
 extern int cmp_timestamp(const void *ptr1, const void *ptr2);
+extern void print_mtx (int m, int n, float mtx[m][n], int l, int t, int r, int b, int type);
 
 #endif
