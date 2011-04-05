@@ -9,6 +9,12 @@
 #include "test_utils.h"
 
 int 
+sqr (int x)
+{
+    return x*x;
+}
+
+int 
 cmp_timestamp(const void *ptr1, const void *ptr2)
 {
 	timestamp *a = (timestamp *)ptr1;
@@ -41,4 +47,33 @@ is_on_same_node(int i, int j, int n, int left, int right)
 		return 0;
 	else
 		return 1;
+}
+
+void
+print_mtx (int m, int n, float mtx[m][n], int l, int t, int r, int b, int type)
+{
+	float sum = 0.0;
+	int cnt = 0;
+	for(int i = t; i < b; i++)
+	{
+		for(int j = l; j < r; j++)
+		{
+			if (i == j) 
+			{
+				cnt++;
+				continue;
+			}
+			sum += mtx[i][j];
+			printf("%d -> %d: %.3f, ",i,j, mtx[i][j]);
+		}
+		printf("\n");
+	}
+	if (type)
+	{
+		printf("avg: %.2f\n", sum / ((float)(b - t)*(r - l) - (float)cnt));
+	}
+	else
+	{
+		printf("sum: %.2f\n", sum);
+	}
 }
