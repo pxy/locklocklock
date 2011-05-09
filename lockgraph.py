@@ -33,15 +33,40 @@ def timedTransitions (lockSeq, relLockSeq):
 	# (lockID_0, trylock_0), find following (lockID_0, relLock_0)
 	# subtract relLock_0 from trylock_1, as in (lockID_0, trylock_1)
 	timeD = collections.defaultdict(dict)
-	count = 0
 	lockSeq.pop(0)
-	for lID in lockSeq:
-		if lID[0] in timeD[relLockSeq[count][0]]:
-			timeD[relLockSeq[count][0]][lID[0]] += lID[1] - relLockSeq[count][1]
+	for i, lID in enumerate(lockSeq):
+		if lID[0] in timeD[relLockSeq[i][0]]:
+			timeD[relLockSeq[i][0]][lID[0]] += lID[1] - relLockSeq[i][1]
 		else:
-			timeD[relLockSeq[count][0]][lID[0]] =  lID[1] - relLockSeq[count][1]
-		count += 1
+			timeD[relLockSeq[i][0]][lID[0]] =  lID[1] - relLockSeq[i][1]
 	return timeD
+
+def waitingTime (acqLockSeq, relLockSeq):
+	"""Calculates average waiting time (service time + queue time) per lock
+	"""
+	# waiting time is:
+	# (lockID_0, trylock_0), find following (lockID_0, relLock_0)
+	# subtract tryLock_0 from relLock_0
+	timeD = collections.defaultdict(dict)
+	for i, lID in enumerate(lockSeq):
+		if lID[0] in timeD[relLockSeq[count][0]]:
+			timeD[relLockSeq[i][0]][lID[0]] += relLockSeq[i][1] - lID[1]
+		else:
+			timeD[relLockSeq[i][0]][lID[0]] =  relLockSeq[i][1] - lID[1]
+	return timeD
+
+
+
+def waitingTimeParse (file):
+	lidDict = {}
+	recReader = csv.reader (file, delimiter=' ', skipinitialspace=True)
+	for _row in recReader:
+		lID = int(_row[0])
+		time = float(_row[1])
+		lidDict[lID] = time
+	return dictToArray (lidDict)
+
+	
 
 def lockDictFromRecords(recFile):
 	# a datastructure containing one entry per thread id.
@@ -64,52 +89,96 @@ def findGr8estKey (dic):
 		keys.extend(subDict.keys())
 	return max (keys)
 
+def shift (array, offset):
+	ret = np.zeros_like(array)
+	ret[offset:] = array[0:-offset]
+	return ret
+
+def dictToArray (dict):
+    size = max(dict.iteritems())[0] + 1
+    print size
+    arr = np.zeros (size)
+    for k,v in dict.iteritems():
+        print k
+        arr[k] = v
+    return arr
+
 def dictToMatrix (dict):
     size = findGr8estKey (dict) + 1
     mtx = np.zeros ((size,size))
     for row in dict.keys():
 		for col in dict[row].keys():
-			mtx[row,col] = dict[row][col]
+		    mtx[row,col] = dict[row][col]
     return mtx
 
-def routingAndTimeMatrix (rDict, tDict):
-	size = findGr8estKey (rDict) + 1
-	routing = dictToMatrix(rDict)
-	timing = dictToMatrix(tDict)
+def countMtx (rDict):
+	return dictToMatrix(rDict)
+
+def avgTimeMtx (tDict, countM):
+	size = countM.shape[0]
+	sumTimeM = dictToMatrix(tDict)
 	# calculate avg transition
-	r = np.maximum(routing, np.ones((size,size)))
-	timing = np.divide(timing, r)
-	# normalise routing row-wise
-	s = np.maximum(np.sum (routing, axis=1), np.ones((size)))
+	r = np.maximum(countM, np.ones((size,size)))
+	return np.divide(sumTimeM, r)
+	
+def normalizeRowWise (countM):
+	size = countM.shape[0]
+	s = np.maximum(np.sum (countM, axis=1), np.ones((size)))
 	s = s.repeat(size).reshape(size,size)
-	return (np.divide(routing,s), routing, timing)
+	return np.divide(countM,s)
+	
+def insertIntermediateQs (rMatrix, tMatrix, tArray):
+	# first row
+	rows, cols = rMatrix.shape
+	r = np.zeros(shape=(rows*2, rows*2))
+	t = np.zeros(rows*2)
+	for i,row in enumerate(rMatrix):
+		r[2*i,2*i+1]  = 1 # the queue representing the interarrival time always routs into the lock q
+		r[(2*i+1),::2] = row # displace each routing by 1
+
+	for i,col in enumerate(tMatrix.T):
+		# first row of tMatrix contains all the interarrival times between lock 1
+		# and all the following locks
+		# aggregate it. (in some way, not necessarily the average)
+		t[2*i] = np.average(col)
+		t[2*i+1] = tArray[i]
+		
+	return r, t
+
+def prune (rMatrix, tMatrix, tArray, predicate):
+	'''will prune the matrix r based on the predicate,
+	which should have type numpy.ndarray -> bool (or whatever)
+	'''
+	keepcol = []
+	keeprow = []
+
+	for row in rMatrix:
+		keeprow.append(predicate(row))
+
+	for col in rMatrix:
+		keepcol.append(predicate(col))
+
+	all = map(max, keepcol, keeprow)
+
+	ret = np.compress(all, np.compress(all, rMatrix, axis=0), axis=1)
+	ret1 = np.compress(all, np.compress(all, tMatrix, axis=0), axis=1)
+	ret2 = np.compress(all, tArray)
+	
+	return ret, ret1, ret2
+	
+
+def aggregateOneThread (acqDic, relDic, tArr):
+	transD = transitionsFromSequence (acqDic)
+	timeD = timedTransitions (acqDic, relDic)
+
+	countM = countMtx(transD)
+	avgTimeM = avgTimeMtx(timeD, countM)
+
+	prunedCount, prunedAvgTime, prunedTArr = prune(countM, avgTimeM, tArr, lambda(rc): np.where( rc > 1000)[0].size > 0)
+	routing = normalizeRowWise (prunedCount)
+	return routing, prunedAvgTime, prunedTArr
 
 
-def graphFromMatrix (mtx):
-	tikzgraph = r"\begin{tikzpicture}[->,>=stealth',shorten >=1pt,auto,node distance=2.8cm,semithick]"
-	end = r"\end{tikzpicture}"
-	abc = "abcdefghijklmnopqrstuvwxyz"
-	count = 0
-	nodelist = []
-	nodeD = {}
-	for row in mtx:
-		nodeD[count] = abc[count]
-		nodelist.append(r"\node[state] (" + nodeD[count] + r") {$ l_" + str(count) + r"$};")
-		count += 1
-	tikzgraph += ''.join(nodelist)
-
-	edgelist = [r"\path "]
-	rc = 0
-	for row in mtx:
-		cc = 0
-		for col in row:
-			if (col > 0.0):
-				edgelist.append(r"(" + nodeD[rc] + r") edge node {" + "%.4f" % col + r"} (" + nodeD[cc] + r")")
-			cc += 1
-		rc += 1
-	edgelist.append(';')
-	tikzgraph += ''.join(edgelist)
-	return tikzgraph + end
 
 def main():
     global options
@@ -133,18 +202,45 @@ def main():
     relDic = lockDictFromRecords(relfile)
 
     for key in dic:
-	   transD = transitionsFromSequence (dic[key])
-	   timeD = timedTransitions (dic[key], relDic[key])
-	   print timeD
-	   transProb, transCount, timing = routingAndTimeMatrix (transD, timeD)
-	   print transProb
-	   print transCount
-	   print timing
-	   print graphFromMatrix (transProb)
+
+	   aggregateOneThread (dic[key], relDic[key])
+	   
+
+#	   newRout, timingArr = insertIntermediateQs (routingM, interarrivalM)
+
+	   
     acqfile.close()
     relfile.close()
 	
     sys.exit(0)
-       
-if __name__ == '__main__':
-    main() 
+
+
+def graphFromMatrix (mtx):
+	tikzgraph = r"\begin{tikzpicture}[->,>=stealth',shorten >=1pt,auto,node distance=2.8cm,semithick]"
+	end = r"\end{tikzpicture}"
+	abc = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVW"
+	count = 0
+	nodelist = []
+	nodeD = {}
+	for row in mtx:
+		nodeD[count] = abc[count]
+		nodelist.append(r"\node[state] (" + nodeD[count] + r") {$ l_" + str(count) + r"$};")
+		count += 1
+	tikzgraph += ''.join(nodelist)
+
+	edgelist = [r"\path "]
+	rc = 0
+	for row in mtx:
+		cc = 0
+		for col in row:
+			if (col > 0.0):
+				edgelist.append(r"(" + nodeD[rc] + r") edge node {" + "%.4f" % col + r"} (" + nodeD[cc] + r")")
+			cc += 1
+		rc += 1
+	edgelist.append(';')
+	tikzgraph += ''.join(edgelist)
+	return tikzgraph + end
+
+
+#if __name__ == '__main__':
+#    main() 

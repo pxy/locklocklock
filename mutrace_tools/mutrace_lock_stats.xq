@@ -10,7 +10,6 @@ return <tr>
 	<td> { data($mx/n_owner_changed) } </td>
 	<td> { data($mx/nsec_locked_max) } </td>
 	<td> { data($mx/nsec_locked_total) } </td>
-	<td> { count($mx/timestamp/trylock)} </td>
 	<td> { data($mx/nsec_locked_total) div data($mx/n_locked[1]) } </td>
 </tr>
 }
