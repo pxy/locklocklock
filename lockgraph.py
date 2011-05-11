@@ -7,23 +7,80 @@ import os,sys,operator,re
 import csv, collections
 import numpy as np
 
+# --------------------------------------------------------------------------
+# utils
+
+def findGr8estKey (dic):
+	'''returns the greatest key found in a nested dictionary of two levels
+	'''
+	keys = dic.keys()
+	for subDict in dic.values():
+		keys.extend(subDict.keys())
+	return max (keys)
+
+def shift (array, offset):
+	ret = np.zeros_like(array)
+	ret[offset:] = array[0:-offset]
+	return ret
+
+def dictToArray (dict):
+    size = max(dict.iteritems())[0] + 1
+    print size
+    arr = np.zeros (size)
+    for k,v in dict.iteritems():
+        print k
+        arr[k] = v
+    return arr
+
+def dictToMatrix (dict):
+    size = findGr8estKey (dict) + 1
+    mtx = np.zeros ((size,size))
+    for row in dict.keys():
+		for col in dict[row].keys():
+		    mtx[row,col] = dict[row][col]
+    return mtx
+
+def normalizeRowWise (mtx):
+	size = mtx.shape[0]
+	s = np.maximum(np.sum (mtx, axis=1), np.ones((size)))
+	s = s.repeat(size).reshape(size,size)
+	return np.divide(mtx,s)
+
+def sumMatrices (mtcs):
+    '''Sums together a list of matrices. The size of the return matrix will be equal to
+    the biggest matrix in the list. (they are assumed to have the same size in all dimensions)
+    '''
+    # find biggest matrix
+    maxM = max(mtcs, key=lambda x: x.shape[0])
+    size = maxM.shape[0]
+    print size
+    mtxG = np.zeros(shape=(size, size))
+    for m in mtcs:
+        n = m.shape[0]
+        mtxG[:n,:n] += m
+    return mtxG
+
+
+# --------------------------------------------------------------------------
+
 
 # input is dictionary with tID as key, sequence of lock accesses as value
-def transitionsFromSequence(lockSeq):
-	''' computes a nested dictionary with lock transition counts,
+def countMtxFromSeq(lockSeq):
+    '''Computes a nested dictionary with lock transition counts,
 	or equivalently, a transition matrix with counts.
-	'''
+    '''
 	# use dictionary instead of matrix, since we don't know the total
 	# number of locks involved
-	lockD = collections.defaultdict(dict)
-	last = lockSeq.pop(0)[0]
-	for lID in lockSeq:
-		if lID[0] in lockD[last]:
-			lockD[last][lID[0]] += 1 
-		else:
-			lockD[last][lID[0]] = 1
-		last = lID[0]
-	return lockD
+    lockD = collections.defaultdict(dict)
+    last = lockSeq.pop(0)[0]
+    for lID in lockSeq:
+        if lID[0] in lockD[last]:
+            lockD[last][lID[0]] += 1 
+        else:
+            lockD[last][lID[0]] = 1
+        last = lID[0]
+    return dictToMatrix(lockD)
+
 
 
 def timedTransitions (lockSeq, relLockSeq):
@@ -58,123 +115,107 @@ def waitingTime (acqLockSeq, relLockSeq):
 
 
 def waitingTimeParse (file):
-	lidDict = {}
-	recReader = csv.reader (file, delimiter=' ', skipinitialspace=True)
-	for _row in recReader:
-		lID = int(_row[0])
-		time = float(_row[1])
-		lidDict[lID] = time
-	return dictToArray (lidDict)
+    '''parse avg service times from a file on format "lockID avgTime"
+    '''
+    lidDict = {}
+    recReader = csv.reader (file, delimiter=' ', skipinitialspace=True)
+    for _row in recReader:
+        lID = int(_row[0])
+        time = float(_row[1])
+        lidDict[lID] = time
+    return dictToArray (lidDict)
 
 	
 
 def lockDictFromRecords(recFile):
-	# a datastructure containing one entry per thread id.
-	# for each thread a list of mutex ids and times will be stored
-	tidDict = {}
-	recReader = csv.reader (recFile, delimiter=' ', skipinitialspace=True)
-	for _row in recReader:
-		row = map (int, filter(None, _row))
-		if row[1] in tidDict:
-			tidDict[row[1]].append((row[2], row[0]))
-		else:
-			tidDict[row[1]] = [(row[2], row[0])]
-	return tidDict
+    '''Parses a record on the format "tsc tID lID" and returns a dictionary
+    where the key is the thread id, and the value is an ordered list of (lID, tsc) tuples.
+    Assumes that the list is sorted in increasing order by timestamp
+    '''
+    tidDict = {}
+    recReader = csv.reader (recFile, delimiter=' ', skipinitialspace=True)
+    for _row in recReader:
+        row = map (int, filter(None, _row))
+        if row[1] in tidDict:
+            tidDict[row[1]].append((row[2], row[0]))
+    else:
+        tidDict[row[1]] = [(row[2], row[0])]
+    return tidDict
 
-def findGr8estKey (dic):
-	'''returns the greatest key found in a nested dictionary of two levels
-	'''
-	keys = dic.keys()
-	for subDict in dic.values():
-		keys.extend(subDict.keys())
-	return max (keys)
-
-def shift (array, offset):
-	ret = np.zeros_like(array)
-	ret[offset:] = array[0:-offset]
-	return ret
-
-def dictToArray (dict):
-    size = max(dict.iteritems())[0] + 1
-    print size
-    arr = np.zeros (size)
-    for k,v in dict.iteritems():
-        print k
-        arr[k] = v
-    return arr
-
-def dictToMatrix (dict):
-    size = findGr8estKey (dict) + 1
-    mtx = np.zeros ((size,size))
-    for row in dict.keys():
-		for col in dict[row].keys():
-		    mtx[row,col] = dict[row][col]
-    return mtx
-
-def countMtx (rDict):
-	return dictToMatrix(rDict)
 
 def avgTimeMtx (tDict, countM):
-	size = countM.shape[0]
-	sumTimeM = dictToMatrix(tDict)
-	# calculate avg transition
-	r = np.maximum(countM, np.ones((size,size)))
-	return np.divide(sumTimeM, r)
+    '''tDict
+    Generates a matrix containing the avg interarrival times between locks
+    '''
+    size = countM.shape[0]
+    sumTimeM = dictToMatrix(tDict)
+    # calculate avg transition
+    r = np.maximum(countM, np.ones((size,size)))
+    return np.divide(sumTimeM, r)
 	
-def normalizeRowWise (countM):
-	size = countM.shape[0]
-	s = np.maximum(np.sum (countM, axis=1), np.ones((size)))
-	s = s.repeat(size).reshape(size,size)
-	return np.divide(countM,s)
 	
 def insertIntermediateQs (rMatrix, tMatrix, tArray):
-	# first row
-	rows, cols = rMatrix.shape
-	r = np.zeros(shape=(rows*2, rows*2))
-	t = np.zeros(rows*2)
-	for i,row in enumerate(rMatrix):
-		r[2*i,2*i+1]  = 1 # the queue representing the interarrival time always routs into the lock q
-		r[(2*i+1),::2] = row # displace each routing by 1
+    '''Inserts intermediate queues, supposing that rMatrix is a routing matrix
+    for the locks.
+    '''
+    # create output matrices (twice as big)
+    size = rMatrix.shape[0]
+    r = np.zeros(shape=(size*2, size*2))
+    t = np.zeros(size*2)
 
-	for i,col in enumerate(tMatrix.T):
-		# first row of tMatrix contains all the interarrival times between lock 1
-		# and all the following locks
-		# aggregate it. (in some way, not necessarily the average)
-		t[2*i] = np.average(col)
-		t[2*i+1] = tArray[i]
-		
-	return r, t
+    # some tricky indexing
 
-def prune (rMatrix, tMatrix, tArray, predicate):
-	'''will prune the matrix r based on the predicate,
-	which should have type numpy.ndarray -> bool (or whatever)
-	'''
-	keepcol = []
-	keeprow = []
+    for i,row in enumerate(rMatrix):
+        r[2*i,2*i+1]  = 1 # the queue representing the interarrival time always routs into the lock q
+        r[(2*i+1),::2] = row # displace each routing by 1
 
-	for row in rMatrix:
-		keeprow.append(predicate(row))
+    for i,col in enumerate(tMatrix.T):
+        # first row of tMatrix contains all the interarrival times between lock 1
+        # and all the following locks
+        # aggregate it. (in some way, not necessarily the average)
+        t[2*i] = np.average(col)
+        t[2*i+1] = tArray[i]
 
-	for col in rMatrix:
-		keepcol.append(predicate(col))
+    return r, t
 
-	all = map(max, keepcol, keeprow)
+def pruneP (epsilon):
+    '''Used as a filter function, this would filter out all (row,column) pairs not
+    containing any value greater than epsilon
+    '''
+    return lambda(rc): np.where( rc > epsilon)[0].size > 0
 
-	ret = np.compress(all, np.compress(all, rMatrix, axis=0), axis=1)
-	ret1 = np.compress(all, np.compress(all, tMatrix, axis=0), axis=1)
-	ret2 = np.compress(all, tArray)
-	
-	return ret, ret1, ret2
+def pruneFilter (mtx, predicate):
+    '''A boolean vector indicating which rows and cols to keep
+    '''
+    keeprow = map(predicate, mtx)
+    keepcol = map(predicate, mtx.T)
+    return map(max, keepcol, keeprow)
+
+def prune (mtx, filter):
+    '''Prunes a matrix in all dimensions, based on the boolean vector filter
+    '''
+    for i in np.arange(mtx.ndim):
+        mtx = np.compress(filter, mtx, axis=i)
+    return mtx
+
+def pruneAll (rMatrix, tMatrix, tArray, epsilon):
+    '''will prune the input matrices keeping the columns and rows for which
+    predicate returns true (on either the column or the row)
+    The predicate should have type numpy.ndarray -> bool (or whatever)
+    '''
+    f = pruneFilter(rMatrix, pruneP (epsilon))
+    return prune(rMatrix, f), prune(tMatrix, f), prune(tArray, f)
 	
 
 def aggregateOneThread (acqDic, relDic, tArr):
-	transD = transitionsFromSequence (acqDic)
+	'''Aggregates data for one thread, based on acquire and release dictionary, and service
+	time array'''
+	countM = countMtxFromSeq (acqDic)
 	timeD = timedTransitions (acqDic, relDic)
 
-	countM = countMtx(transD)
 	avgTimeM = avgTimeMtx(timeD, countM)
 
-	prunedCount, prunedAvgTime, prunedTArr = prune(countM, avgTimeM, tArr, lambda(rc): np.where( rc > 1000)[0].size > 0)
+	prunedCount, prunedAvgTime, prunedTArr = pruneAll(countM, avgTimeM, tArr, 1000)
 	routing = normalizeRowWise (prunedCount)
 	return routing, prunedAvgTime, prunedTArr
 
@@ -202,9 +243,10 @@ def main():
     relDic = lockDictFromRecords(relfile)
 
     for key in dic:
-
 	   aggregateOneThread (dic[key], relDic[key])
 	   
+#   or why not
+    cntMtcs = map (countMtxFromSeq, acqDics)
 
 #	   newRout, timingArr = insertIntermediateQs (routingM, interarrivalM)
 
@@ -215,32 +257,9 @@ def main():
     sys.exit(0)
 
 
-def graphFromMatrix (mtx):
-	tikzgraph = r"\begin{tikzpicture}[->,>=stealth',shorten >=1pt,auto,node distance=2.8cm,semithick]"
-	end = r"\end{tikzpicture}"
-	abc = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVW"
-	count = 0
-	nodelist = []
-	nodeD = {}
-	for row in mtx:
-		nodeD[count] = abc[count]
-		nodelist.append(r"\node[state] (" + nodeD[count] + r") {$ l_" + str(count) + r"$};")
-		count += 1
-	tikzgraph += ''.join(nodelist)
 
-	edgelist = [r"\path "]
-	rc = 0
-	for row in mtx:
-		cc = 0
-		for col in row:
-			if (col > 0.0):
-				edgelist.append(r"(" + nodeD[rc] + r") edge node {" + "%.4f" % col + r"} (" + nodeD[cc] + r")")
-			cc += 1
-		rc += 1
-	edgelist.append(';')
-	tikzgraph += ''.join(edgelist)
-	return tikzgraph + end
 
+# uncomment when running from command line
 
 #if __name__ == '__main__':
 #    main() 
