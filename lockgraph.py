@@ -6,9 +6,10 @@ from argparse import ArgumentParser,FileType
 import os,sys,operator,re
 import csv, collections
 import numpy as np
+from mva import mva
 
 # --------------------------------------------------------------------------
-# utils
+# UTILS
 
 def findGr8estKey (dic):
 	'''returns the greatest key found in a nested dictionary of two levels
@@ -28,7 +29,6 @@ def dictToArray (dict):
     print size
     arr = np.zeros (size)
     for k,v in dict.iteritems():
-        print k
         arr[k] = v
     return arr
 
@@ -53,130 +53,17 @@ def sumMatrices (mtcs):
     # find biggest matrix
     maxM = max(mtcs, key=lambda x: x.shape[0])
     size = maxM.shape[0]
-    print size
     mtxG = np.zeros(shape=(size, size))
     for m in mtcs:
         n = m.shape[0]
         mtxG[:n,:n] += m
     return mtxG
 
-
+# end UTILS
 # --------------------------------------------------------------------------
 
-
-# input is dictionary with tID as key, sequence of lock accesses as value
-def countMtxFromSeq(lockSeq):
-    '''Computes a nested dictionary with lock transition counts,
-	or equivalently, a transition matrix with counts.
-    '''
-	# use dictionary instead of matrix, since we don't know the total
-	# number of locks involved
-    lockD = collections.defaultdict(dict)
-    last = lockSeq.pop(0)[0]
-    for lID in lockSeq:
-        if lID[0] in lockD[last]:
-            lockD[last][lID[0]] += 1 
-        else:
-            lockD[last][lID[0]] = 1
-        last = lID[0]
-    return dictToMatrix(lockD)
-
-
-
-def timedTransitions (lockSeq, relLockSeq):
-	"""Calculates average transition time for all lock handovers
-	"""
-	# transition time is:
-	# (lockID_0, trylock_0), find following (lockID_0, relLock_0)
-	# subtract relLock_0 from trylock_1, as in (lockID_0, trylock_1)
-	timeD = collections.defaultdict(dict)
-	lockSeq.pop(0)
-	for i, lID in enumerate(lockSeq):
-		if lID[0] in timeD[relLockSeq[i][0]]:
-			timeD[relLockSeq[i][0]][lID[0]] += lID[1] - relLockSeq[i][1]
-		else:
-			timeD[relLockSeq[i][0]][lID[0]] =  lID[1] - relLockSeq[i][1]
-	return timeD
-
-def waitingTime (acqLockSeq, relLockSeq):
-	"""Calculates average waiting time (service time + queue time) per lock
-	"""
-	# waiting time is:
-	# (lockID_0, trylock_0), find following (lockID_0, relLock_0)
-	# subtract tryLock_0 from relLock_0
-	timeD = collections.defaultdict(dict)
-	for i, lID in enumerate(lockSeq):
-		if lID[0] in timeD[relLockSeq[count][0]]:
-			timeD[relLockSeq[i][0]][lID[0]] += relLockSeq[i][1] - lID[1]
-		else:
-			timeD[relLockSeq[i][0]][lID[0]] =  relLockSeq[i][1] - lID[1]
-	return timeD
-
-
-
-def waitingTimeParse (file):
-    '''parse avg service times from a file on format "lockID avgTime"
-    '''
-    lidDict = {}
-    recReader = csv.reader (file, delimiter=' ', skipinitialspace=True)
-    for _row in recReader:
-        lID = int(_row[0])
-        time = float(_row[1])
-        lidDict[lID] = time
-    return dictToArray (lidDict)
-
-	
-
-def lockDictFromRecords(recFile):
-    '''Parses a record on the format "tsc tID lID" and returns a dictionary
-    where the key is the thread id, and the value is an ordered list of (lID, tsc) tuples.
-    Assumes that the list is sorted in increasing order by timestamp
-    '''
-    tidDict = {}
-    recReader = csv.reader (recFile, delimiter=' ', skipinitialspace=True)
-    for _row in recReader:
-        row = map (int, filter(None, _row))
-        if row[1] in tidDict:
-            tidDict[row[1]].append((row[2], row[0]))
-    else:
-        tidDict[row[1]] = [(row[2], row[0])]
-    return tidDict
-
-
-def avgTimeMtx (tDict, countM):
-    '''tDict
-    Generates a matrix containing the avg interarrival times between locks
-    '''
-    size = countM.shape[0]
-    sumTimeM = dictToMatrix(tDict)
-    # calculate avg transition
-    r = np.maximum(countM, np.ones((size,size)))
-    return np.divide(sumTimeM, r)
-	
-	
-def insertIntermediateQs (rMatrix, tMatrix, tArray):
-    '''Inserts intermediate queues, supposing that rMatrix is a routing matrix
-    for the locks.
-    '''
-    # create output matrices (twice as big)
-    size = rMatrix.shape[0]
-    r = np.zeros(shape=(size*2, size*2))
-    t = np.zeros(size*2)
-
-    # some tricky indexing
-
-    for i,row in enumerate(rMatrix):
-        r[2*i,2*i+1]  = 1 # the queue representing the interarrival time always routs into the lock q
-        r[(2*i+1),::2] = row # displace each routing by 1
-
-    for i,col in enumerate(tMatrix.T):
-        # first row of tMatrix contains all the interarrival times between lock 1
-        # and all the following locks
-        # aggregate it. (in some way, not necessarily the average)
-        t[2*i] = np.average(col)
-        t[2*i+1] = tArray[i]
-
-    return r, t
+# --------------------------------------------------------------------------
+# PRUNING matrices
 
 def pruneP (epsilon):
     '''Used as a filter function, this would filter out all (row,column) pairs not
@@ -198,29 +85,189 @@ def prune (mtx, filter):
         mtx = np.compress(filter, mtx, axis=i)
     return mtx
 
-def pruneAll (rMatrix, tMatrix, tArray, epsilon):
+# end PRUNING
+# --------------------------------------------------------------------------
+
+
+
+# input is dictionary with tID as key, sequence of lock accesses as value
+def countMtxFromSeq(lockSeq):
+    '''Computes a nested dictionary with lock transition counts,
+	or equivalently, a transition matrix with counts.
+    '''
+	# use dictionary instead of matrix, since we don't know the total
+	# number of locks involved
+    lockD = collections.defaultdict(dict)
+    last = lockSeq[0][0]
+    for lID in lockSeq[1:]:
+        if lID[0] in lockD[last]:
+            lockD[last][lID[0]] += 1 
+        else:
+            lockD[last][lID[0]] = 1
+        last = lID[0]
+    return dictToMatrix(lockD)
+
+
+
+def timedTransitions (lockSeq, relLockSeq):
+    """Calculates average transition time between locks
+    """
+    # transition time is:
+    # (lockID_0, trylock_0), find following (lockID_0, relLock_0)
+    # subtract relLock_0 from trylock_1, as in (lockID_0, trylock_1)
+    timeD = collections.defaultdict(dict)
+    for i, lID in enumerate(lockSeq[1:]):
+        if lID[0] in timeD[relLockSeq[i][0]]:
+            timeD[relLockSeq[i][0]][lID[0]] += lID[1] - relLockSeq[i][1]
+        else:
+            timeD[relLockSeq[i][0]][lID[0]] =  lID[1] - relLockSeq[i][1]
+    return timeD
+
+
+# NOT IN USE
+def waitingTime (acqLockSeq, relLockSeq):
+	"""Calculates average waiting time (service time + queue time) per lock
+	"""
+	# waiting time is:
+	# (lockID_0, trylock_0), find following (lockID_0, relLock_0)
+	# subtract tryLock_0 from relLock_0
+	timeD = collections.defaultdict(dict)
+	for i, lID in enumerate(lockSeq):
+		if lID[0] in timeD[relLockSeq[count][0]]:
+			timeD[relLockSeq[i][0]][lID[0]] += relLockSeq[i][1] - lID[1]
+		else:
+			timeD[relLockSeq[i][0]][lID[0]] =  relLockSeq[i][1] - lID[1]
+	return timeD
+
+
+def waitingTimeParse (file):
+    '''parse avg service times from a file on format "lockID avgTime".
+    Returns a vector with position lockID having value avgTime
+    '''
+    lidDict = {}
+    recReader = csv.reader (file, delimiter=' ', skipinitialspace=True)
+    for _row in recReader:
+        lID = int(_row[0])
+        time = float(_row[1])
+        lidDict[lID] = time
+    return dictToArray (lidDict)
+	
+
+def lockDictFromRecords(recFile):
+    '''Parses a record on the format "tsc tID lID" and returns a dictionary
+    where the key is the thread id, and the value is an ordered list of (lID, tsc) tuples.
+    Assumes that the list is sorted in increasing order by timestamp
+    '''
+    tidDict = {}
+    recReader = csv.reader (recFile, delimiter=' ', skipinitialspace=True)
+    for _row in recReader:
+        row = map (int, filter(None, _row))
+        if row[1] in tidDict.keys():
+            tidDict[row[1]].append((row[2], row[0]))
+        else:
+            tidDict[row[1]] = [(row[2], row[0])]
+    return tidDict
+
+def sumTimeMtx (acqSeq, relSeq):
+    return dictToMatrix (timedTransitions (acqSeq, relSeq))
+
+def avgTimeMtx (acqSeq, relSeq, countM):
+    '''Generates a matrix containing the avg interarrival times between locks
+    '''
+    sumTimeM = sumTimeMtx (acqSeq, relSeq)
+
+    size = countM.shape[0]
+    if sumTimeM.shape[0] != size:
+        print "WARNING: count matrix not same size as interarrival time matrix."
+    # calculate avg transition
+    r = np.maximum(countM, np.ones((size,size)))
+    return np.divide(sumTimeM, r)
+
+
+
+def insertIntermediateQs (rMatrix, tMatrix, tArray):
+    '''Inserts intermediate queues, supposing that rMatrix is a routing matrix
+    for the locks.
+    '''
+    # create output matrices (twice as big)
+    size = rMatrix.shape[0]
+    r = np.zeros(shape=(size*2, size*2))
+    t = np.zeros(size*2)
+
+    for i,row in enumerate(rMatrix):
+        r[2*i,2*i+1]  = 1 # the queue representing the interarrival time always routs into the lock q
+        r[(2*i+1),::2] = row # displace each routing by 1
+
+
+
+    for i,col in enumerate(tMatrix.T):
+        # first row of tMatrix contains all the interarrival times between lock 1
+        # and all the following locks
+        t[2*i] = np.average(col, weights=rMatrix.T[i]) # aggregate it. (in some way)
+        t[2*i+1] = tArray[i]
+
+    return r, t
+
+
+def pruneAll (rMtx, tMtx, tVec, epsilon):
     '''will prune the input matrices keeping the columns and rows for which
     predicate returns true (on either the column or the row)
     The predicate should have type numpy.ndarray -> bool (or whatever)
     '''
-    f = pruneFilter(rMatrix, pruneP (epsilon))
-    return prune(rMatrix, f), prune(tMatrix, f), prune(tArray, f)
+    f = pruneFilter (rMtx, pruneP (epsilon))
+
+    ids = np.compress(f, np.arange(len (f)))
+    
+    return prune(rMtx, f), prune(tMtx, f), prune(tVec, f), ids
+
+def analyze (acqDic, relDic, servTimeVec, numT):
+    cntMtcs = map (countMtxFromSeq, acqDic.values())
+
+    sumInterArrivalMtcs = map (sumTimeMtx, acqDic.values(), relDic.values())
+
+    cntTotalM = sumMatrices (cntMtcs)
+    sumInterArrivalTotalM = sumMatrices (sumInterArrivalMtcs)
+    print sumInterArrivalTotalM
+
+    # sanity check
+    if sumInterArrivalTotalM.shape[0] != cntTotalM.shape[0]:
+        print "WARNING: count matrix not same size as interarrival time matrix."
+
+    # FIX
+    t = np.ones(cntTotalM.shape[0])
+    t[:servTimeVec.shape[0]] = servTimeVec
+    servTimeVec = t
+
+    # calculate avg transition time
+    r = np.maximum(cntTotalM, np.ones_like (cntTotalM))
+    avgInterArrivalTotalM = np.divide (sumInterArrivalTotalM, r)
+
+    print avgInterArrivalTotalM
+
+    # remove unimportant
+    cntP, avgInterArrivalP, servTimeVecP, idMap = pruneAll (cntTotalM, avgInterArrivalTotalM, servTimeVec, 1000)
+
+    print "Count matrix: "
+    print cntP
+    print "Avg. inter arrival: "
+    print avgInterArrivalP
+
+    routP = normalizeRowWise (cntP)
+
+    newRout, servTimes = insertIntermediateQs (routP, avgInterArrivalP, servTimeVecP)
+
+    estimate = mva (newRout, 1/servTimes, numT)
+
+    print "Waiting times: "
+    print estimate[1::2]
+    print "Pure service times?: "
+    print servTimeVecP
+    print "Increased contention: "
+    print estimate[1::2]/servTimeVecP
+    print "row -> lockID map: "
+    print [(i, row) for i, row in enumerate (idMap)]
+    return
 	
-
-def aggregateOneThread (acqDic, relDic, tArr):
-	'''Aggregates data for one thread, based on acquire and release dictionary, and service
-	time array'''
-	countM = countMtxFromSeq (acqDic)
-	timeD = timedTransitions (acqDic, relDic)
-
-	avgTimeM = avgTimeMtx(timeD, countM)
-
-	prunedCount, prunedAvgTime, prunedTArr = pruneAll(countM, avgTimeM, tArr, 1000)
-	routing = normalizeRowWise (prunedCount)
-	return routing, prunedAvgTime, prunedTArr
-
-
-
 def main():
     global options
     parser = ArgumentParser()
@@ -237,26 +284,23 @@ def main():
         print >> sys.stderr, "options:", options
 
     acqfile = open(options.lockacq)
-    dic = lockDictFromRecords(acqfile)
+    acqDic = lockDictFromRecords(acqfile)
 
     relfile = open(options.lockrel)
     relDic = lockDictFromRecords(relfile)
 
-    for key in dic:
-	   aggregateOneThread (dic[key], relDic[key])
-	   
-#   or why not
-    cntMtcs = map (countMtxFromSeq, acqDics)
 
-#	   newRout, timingArr = insertIntermediateQs (routingM, interarrivalM)
-
-	   
+    servfile = open(options.servfile)
+    servTimeVec = waitingTimeParse(servfile)
+    
     acqfile.close()
     relfile.close()
-	
+    servfile.close()
+
+    analyze (acqDic, relDic, servTimeVec, 8)
+
     sys.exit(0)
-
-
+    # END MAIN
 
 
 # uncomment when running from command line
