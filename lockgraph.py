@@ -20,13 +20,14 @@ def findGr8estKey (dic):
 	return max (keys)
 
 def shift (array, offset):
-	ret = np.zeros_like(array)
-	ret[offset:] = array[0:-offset]
-	return ret
+    '''shifts array array offset steps to the right, introducing zeros from the left
+    '''
+    ret = np.zeros_like(array)
+    ret[offset:] = array[0:-offset]
+    return ret
 
 def dictToArray (dict):
     size = max(dict.iteritems())[0] + 1
-    print size
     arr = np.zeros (size)
     for k,v in dict.iteritems():
         arr[k] = v
@@ -41,10 +42,11 @@ def dictToMatrix (dict):
     return mtx
 
 def normalizeRowWise (mtx):
-	size = mtx.shape[0]
-	s = np.maximum(np.sum (mtx, axis=1), np.ones((size)))
-	s = s.repeat(size).reshape(size,size)
-	return np.divide(mtx,s)
+    '''normalizes the matrix mtx row-wise'''
+    size = mtx.shape[0]
+    s = np.maximum(np.sum (mtx, axis=1), np.ones((size)))
+    s = s.repeat(size).reshape(size,size)
+    return np.divide(mtx,s)
 
 def sumMatrices (mtcs):
     '''Sums together a list of matrices. The size of the return matrix will be equal to
@@ -108,7 +110,7 @@ def countMtxFromSeq(lockSeq):
     return dictToMatrix(lockD)
 
 
-
+# FIX NOW !
 def timedTransitions (lockSeq, relLockSeq):
     """Calculates average transition time between locks
     """
@@ -124,7 +126,7 @@ def timedTransitions (lockSeq, relLockSeq):
     return timeD
 
 
-# NOT IN USE
+# NOT IN USE, has to be fixed before using
 def waitingTime (acqLockSeq, relLockSeq):
 	"""Calculates average waiting time (service time + queue time) per lock
 	"""
@@ -198,8 +200,6 @@ def insertIntermediateQs (rMatrix, tMatrix, tArray):
         r[2*i,2*i+1]  = 1 # the queue representing the interarrival time always routs into the lock q
         r[(2*i+1),::2] = row # displace each routing by 1
 
-
-
     for i,col in enumerate(tMatrix.T):
         # first row of tMatrix contains all the interarrival times between lock 1
         # and all the following locks
@@ -221,52 +221,57 @@ def pruneAll (rMtx, tMtx, tVec, epsilon):
     return prune(rMtx, f), prune(tMtx, f), prune(tVec, f), ids
 
 def analyze (acqDic, relDic, servTimeVec, numT):
+    print 'calculating matrices'
     cntMtcs = map (countMtxFromSeq, acqDic.values())
 
     sumInterArrivalMtcs = map (sumTimeMtx, acqDic.values(), relDic.values())
 
     cntTotalM = sumMatrices (cntMtcs)
     sumInterArrivalTotalM = sumMatrices (sumInterArrivalMtcs)
-    print sumInterArrivalTotalM
 
     # sanity check
     if sumInterArrivalTotalM.shape[0] != cntTotalM.shape[0]:
         print "WARNING: count matrix not same size as interarrival time matrix."
 
-    # FIX
-    t = np.ones(cntTotalM.shape[0])
-    t[:servTimeVec.shape[0]] = servTimeVec
-    servTimeVec = t
+    # FIX, temporary solution
+    if cntTotalM.shape[0] != servTimeVec.shape[0]:
+        print "WARNING: service time vector not the same size as count matrices. Correcting (not good solution)."
+        tVec = np.ones(cntTotalM.shape[0])
+        tVec[:servTimeVec.shape[0]] = servTimeVec
+    else:
+        tVec = servTimeVec
 
     # calculate avg transition time
     r = np.maximum(cntTotalM, np.ones_like (cntTotalM))
     avgInterArrivalTotalM = np.divide (sumInterArrivalTotalM, r)
 
-    print avgInterArrivalTotalM
+    # prune locks not used very much
+    cntP, avgInterArrivalP, tVecP, idMap = pruneAll (cntTotalM, avgInterArrivalTotalM, tVec, 1000)
 
-    # remove unimportant
-    cntP, avgInterArrivalP, servTimeVecP, idMap = pruneAll (cntTotalM, avgInterArrivalTotalM, servTimeVec, 1000)
-
-    print "Count matrix: "
-    print cntP
-    print "Avg. inter arrival: "
-    print avgInterArrivalP
-
+    # normalize (row-wise) the pruned transition count matrix to get the routing matrix
     routP = normalizeRowWise (cntP)
 
-    newRout, servTimes = insertIntermediateQs (routP, avgInterArrivalP, servTimeVecP)
+    # insert intermediate infinite server qs to represent the interarrival times
+    # service time is calculated as the weighted average of the incoming traffic
+    newRout, servTimes = insertIntermediateQs (routP, avgInterArrivalP, tVecP)
 
+    # just to get an idea of which lock is used a lot
+    totAccessesEachLock = np.sum (cntP, axis=0)
+
+    # mva it
     estimate = mva (newRout, 1/servTimes, numT)
 
     print "Waiting times: "
     print estimate[1::2]
     print "Pure service times?: "
-    print servTimeVecP
-    print "Increased contention: "
-    print estimate[1::2]/servTimeVecP
+    print tVecP
+    print "Increased contention?: "
+    print estimate[1::2]/tVecP
+    print "# of lock accesses:"
+    print totAccessesEachLock
     print "row -> lockID map: "
     print [(i, row) for i, row in enumerate (idMap)]
-    return
+    return 
 	
 def main():
     global options
@@ -276,8 +281,10 @@ def main():
     parser.add_argument("-d", "--debug",
 						action="store_true", dest="debug", default=False,
 						help="print debug information")
+    parser.add_argument("-n", type=int, dest="numCores", nargs='?', help="Number of customers in queueing network.")
     parser.add_argument("lockacq", help="File containing thread IDs, lock IDs and acquire timestamps, sorted by time.")
     parser.add_argument("lockrel", help="File containing thread IDs, lock IDs and release timestamps, sorted by time.")
+    parser.add_argument("servfile", help="File containing lock IDs and average service time, sorted by lock ID.")
     options = parser.parse_args()
 
     if options.debug:
@@ -289,7 +296,6 @@ def main():
     relfile = open(options.lockrel)
     relDic = lockDictFromRecords(relfile)
 
-
     servfile = open(options.servfile)
     servTimeVec = waitingTimeParse(servfile)
     
@@ -297,7 +303,7 @@ def main():
     relfile.close()
     servfile.close()
 
-    analyze (acqDic, relDic, servTimeVec, 8)
+    analyze (acqDic, relDic, servTimeVec, options.numCores)
 
     sys.exit(0)
     # END MAIN
@@ -305,5 +311,5 @@ def main():
 
 # uncomment when running from command line
 
-#if __name__ == '__main__':
+# if __name__ == '__main__':
 #    main() 
