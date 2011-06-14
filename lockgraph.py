@@ -51,8 +51,10 @@ def normalizeRowWise (mtx):
     '''normalizes the matrix mtx row-wise'''
     size = mtx.shape[0]
     s = np.maximum(np.sum (mtx, axis=1), np.ones((size)))
-    s = s.repeat(size).reshape(size,size)
-    return np.divide(mtx,s)
+	# divide every row of mtx by s
+	
+    return np.divide(mtx.T,s).T
+
 
 def sumMatrices (mtcs):
     '''Sums together a list of matrices. The size of the return matrix will be equal to
@@ -97,6 +99,16 @@ def revertListDict (dict):
         for i in v:
             retD[i] = k
     return retD
+
+def listOfArrToMtx (list):
+	'''list: a list of variable length array-like elements
+	POST: a matrix whose rows consists of the elements in list
+	'''
+	mtx = np.zeros ((len(list), len(max (list, key=len))))
+
+	for i, row in enumerate (list):
+		mtx[i,0:len(row)] = row
+	return mtx
 
 # end UTILS
 # --------------------------------------------------------------------------
@@ -183,6 +195,9 @@ def parseInstrList (instrFile):
         res.append(regex.search(_row[2]).group('hexaddr'))
     return res
 
+#--------------------------------------------------------------------------
+# ENTRY POINT for parsing
+#--------------------------------------------------------------------------
 
 def parseDicTuple (prefix, ths):
 	'''Parses three related files, based on a file path prefix and the number
@@ -190,23 +205,27 @@ def parseDicTuple (prefix, ths):
 	Assumes the data files follow the naming convention appname_{#threads}th_{acq,rel}.dat
 	prefix should be the path, including the appname.
 	'''
-	acqfile = open(prefix + "_" + str(ths) + "th_acq.dat")
+	tryfile = open(prefix + "_try_" + str(ths) + "th.dat")
+	tryDic = lockDictFromRecords(tryfile)
+
+	acqfile = open(prefix + "_acq_" + str(ths) + "th.dat")
 	acqDic = lockDictFromRecords(acqfile)
 
-	relfile = open(prefix + "_" + str(ths) + "th_rel.dat")
+	relfile = open(prefix + "_rel_" + str(ths) + "th.dat")
 	relDic = lockDictFromRecords(relfile)
 
-	creationFile = open(prefix + "_lid_instr_" + str(ths) + "th.dat")
-	createVec = creationParse(creationFile)
+	creationFile = open(prefix + "_addr_" + str(ths) + "th.dat")
+	#createVec = creationParse(creationFile)
+	#creationFile.seek(0)
 
-	creationFile.seek(0)
 	instrVec = parseInstrList(creationFile)
 
+	tryfile.close()
 	acqfile.close()
 	relfile.close()
 	creationFile.close()
 
-	return (acqDic, relDic, createVec, instrVec)
+	return (tryDic, acqDic, relDic, instrVec)
 
 
 # end PARSING
@@ -240,34 +259,36 @@ def timedTransitions (lockSeq, relLockSeq):
     return timeD
 
 
-def waitingTime (acqLockSeq, relLockSeq):
+def waitingTime (tryLockSeq, relLockSeq):
 	'''POST: Dictionary containing all individual waiting times for each lock
 	'''
     # waiting time is:
     # (lockID_0, trylock_0), find following (lockID_0, relLock_0) in rel
     # subtract tryLock_0 from relLock_0
 	timeD = collections.defaultdict(dict)
-	for i, acq in enumerate(acqLockSeq):
+	for i, tryL in enumerate(tryLockSeq):
 		rel = relLockSeq[i]
-		if acq[0] != rel[0]:
+		if tryL[0] != rel[0]:
 			print "ERROR: lock sequences not synced"
-		appendCond(timeD, rel[0], rel[1] - acq[1])
+		appendCond(timeD, rel[0], rel[1] - tryL[1])
 	return timeD
 
-def sumWaitingTime (acqSeq, relSeq):
+def sumWaitingTime (trySeq, relSeq):
 	sumWait = 0
-	for i, acq in enumerate(acqSeq):
-		rel = relSeq[i]
-		if acq[0] != rel[0]:
+	for i, tryL in enumerate(trySeq):
+		rel = rellSeq[i]
+		if tryL[0] != rel[0]:
 			print "ERROR: lock sequences not synced"
-		sumWait += rel[1] - acq[1]
+		sumWait += rel[1] - tryL[1]
 	return sumWait
+
+
     
-def avgWaitTime (acqLockSeq, relLockSeq):
+def avgWaitTime (tryLockSeq, relLockSeq):
 	"""Calculates average waiting time (service time + queue time) per lock
-    INPUT: acqLockSeq, relLockSeq : a tuple list of the form (lockID, timestamp)
+    INPUT: tryLockSeq, relLockSeq : a tuple list of the form (lockID, timestamp)
     """
-	timeD = waitingTime (acqLockSeq, relLockSeq)
+	timeD = waitingTime (tryLockSeq, relLockSeq)
 	size = max (timeD.keys()) + 1
 	arr = np.zeros(size)
 	countArr = np.zeros(size)
@@ -287,31 +308,22 @@ def servTime (acqD, relD):
 
 	servTimes, counts = zip (*servTimeList)
 
-	count = np.zeros_like(max(counts, key=len))
+	servTimesMtx = listOfArrToMtx (servTimes)
+	countMtx = listOfArrToMtx (counts)
 
-	for c in counts:
-		print str(len(c))
-		count[0:len(c)] += c
+	# norm of columns
+	norms = normalizeRowWise(countMtx.T).T
+	
+	return np.average (servTimesMtx, axis=0, weights=norms)
+	
 
-	norms = map (lambda x: x / count[:len(x)] * 1.0, counts)
+def sumTimeMtx (trySeq, relSeq):
+    return dictToMatrix (timedTransitions (trySeq, relSeq))
 
-	# weighted average
-
-	servTimeArr = np.zeros_like( max (servTimes, key = len))
-	for i,l in enumerate(servTimes):
-		l[0:len(norms[i])] *= norms[i]
-		l[len(norms[i]):] = np.zeros(l.shape[0] - len(norms[i]))
-		servTimeArr[0:len(l)] += l
-	return (servTimeArr, count)
-
-
-def sumTimeMtx (acqSeq, relSeq):
-    return dictToMatrix (timedTransitions (acqSeq, relSeq))
-
-def avgTimeMtx (acqSeq, relSeq, countM):
+def avgTimeMtx (trySeq, relSeq, countM):
     '''Generates a matrix containing the avg interarrival times between locks
     '''
-    sumTimeM = sumTimeMtx (acqSeq, relSeq)
+    sumTimeM = sumTimeMtx (trySeq, relSeq)
 
     size = countM.shape[0]
     if sumTimeM.shape[0] != size:
@@ -426,55 +438,52 @@ def pruneAll (rMtx, tMtx, tVec, epsilon):
 # entry point of application
 
 
-def analyze (acqDic, relDic, servTimeVec_, numT, lockNames):
-    print 'calculating matrices'
-    cntMtcs = map (countMtxFromSeq, acqDic.values())
+def analyze (tryDic, acqDic, relDic, namesVec, numT):
+	cntMtcs = map (countMtxFromSeq, acqDic.values())
 
-    sumInterArrivalMtcs = map (sumTimeMtx, acqDic.values(), relDic.values())
+	sumInterArrivalMtcs = map (sumTimeMtx, tryDic.values(), relDic.values())
 
-    cntTotalM = sumMatrices (cntMtcs)
-    sumInterArrivalTotalM = sumMatrices (sumInterArrivalMtcs)
+	cntTotalM = sumMatrices (cntMtcs)
+	sumInterArrivalTotalM = sumMatrices (sumInterArrivalMtcs)
 
-    # sanity check
-    if sumInterArrivalTotalM.shape[0] != cntTotalM.shape[0]:
-        print "WARNING: count matrix not same size as interarrival time matrix."
+	# sanity check
+	if sumInterArrivalTotalM.shape[0] != cntTotalM.shape[0]:
+		print "WARNING: count matrix not same size as interarrival time matrix."
 
-    # After this point, the mapping between locks in the service time array and the
-    # matrices should be one to one
+	servTimeVec = servTime (acqDic, relDic)
 
-    servTimeVec = servTimeVec_[0:cntTotalM.shape[0]]
-    
-    # calculate avg transition time
-    r = np.maximum(cntTotalM, np.ones_like (cntTotalM))
-    avgInterArrivalTotalM = np.divide (sumInterArrivalTotalM, r)
+	# calculate avg transition time
+	r = np.maximum(cntTotalM, np.ones_like (cntTotalM))
+	avgInterArrivalTotalM = np.divide (sumInterArrivalTotalM, r)
 
-    # prune locks not used very much
-    cntP, avgInterArrivalP, tVecP, idMap = pruneAll (cntTotalM, avgInterArrivalTotalM, servTimeVec, 100)
+	# prune locks not used very much
+	#cntP, avgInterArrivalP, tVecP, idMap = pruneAll (cntTotalM, avgInterArrivalTotalM, servTimeVec, 100)
+	# normalize (row-wise) the pruned transition count matrix to get the routing matrix
+	#routP = normalizeRowWise (cntP)
+	# insert intermediate infinite server qs to represent the interarrival times
+	# service time is calculated as the weighted average of the incoming traffic
+	#newRout, servTimes = insertIntermediateQs (routP, avgInterArrivalP, tVecP)
 
-    # normalize (row-wise) the pruned transition count matrix to get the routing matrix
-    routP = normalizeRowWise (cntP)
 
-    # insert intermediate infinite server qs to represent the interarrival times
-    # service time is calculated as the weighted average of the incoming traffic
-    newRout, servTimes = insertIntermediateQs (routP, avgInterArrivalP, tVecP)
+	rout = normalizeRowWise (cntTotalM)
+	newRout, servTimes = insertIntermediateQs (rout, avgInterArrivalTotalM, servTimeVec)
 
-    # just to get an idea of which lock is used a lot
-    totAccessesEachLock = np.sum (cntP, axis=0)
+	# just to get an idea of which lock is used a lot
+	#totAccessesEachLock = np.sum (cntP, axis=0)
 
-    # mva it
-    estimate = mva (newRout, 1/servTimes, numT)
+	cntTot = np.sum (cntTotalM, axis=0)
 
-    print "Waiting times: "
-    print estimate[1::2]
-    print "Pure service times?: "
-    print tVecP
-    print "Increased contention?: "
-    print estimate[1::2]/tVecP
-    print "# of lock accesses:"
-    print totAccessesEachLock
-    print "row -> lockID map: "
-    print [(i, row) for i, row in enumerate (idMap)]
-    return 
+	# mva it
+	estimate = mva (newRout, 1/servTimes, numT)
+	estincr  = estimate[1::2]/servTimeVec
+
+	# actual waiting time for numT threads
+	actualWait = servTime(tryDic, relDic)
+
+	for i,e in enumerate (estimate[1::2]):
+		print '%s : act: %6.0f, est: %6.0f, serv: %6.0f, est.incr: %1.3f, acc: %d' % (namesVec[i], actualWait[i], estimate[1::2][i], servTimeVec[i], estincr[i], cntTot[i])
+
+	return 
 
 #--------------------------------------------------------------------------
 
