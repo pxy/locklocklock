@@ -1,5 +1,5 @@
 import numpy as np
-import os
+import os, csv
 
 
 def normalizeList(l, sumTo=1):
@@ -39,5 +39,8 @@ def writeHisto (hist, name, path):
 	fd.write ('# ' + name)
 	hist.tofile(fd, sep='\n', format="%d")
 
-
+def writeResult (name, path, data):
+	w = csv.writer(open(path + os.sep + name + '.dat', 'w'), delimiter=' ')
+	w.writerows(data)
+	
 	

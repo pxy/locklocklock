@@ -173,11 +173,11 @@ def lockDictFromRecords(recFile):
 	ordered list of (lID, tsc) tuples. Assumes that the list is sorted
 	in increasing order by timestamp
 	'''
-	tidDict = {}
+	tidDict = defaultdict(list)
 	recReader = csv.reader (recFile, delimiter=' ', skipinitialspace=True)
 	for _row in recReader:
 		row = map (int, filter(None, _row))
-		appendCond (tidDict, row[1], (row[2], row[0]))
+		tidDict[row[1]].append((row[2], row[0]))
 	return tidDict
 
 def parseInstrList (instrFile):
@@ -253,7 +253,7 @@ def timedTransitions (lockSeq, relLockSeq):
 	# transition time is:
 	# (lockID_0, trylock_0), find following (lockID_0, relLock_0)
 	# subtract relLock_0 from trylock_1, as in (lockID_0, trylock_1)
-	lockD = defaultdict(lambda : defaultdict(int))
+	timeD = defaultdict(lambda : defaultdict(int))
 	for i, lID in enumerate(lockSeq[1:]):
 		timeD[relLockSeq[i][0]][lID[0]] += lID[1] - relLockSeq[i][1]
 	return timeD
@@ -296,8 +296,8 @@ def avgWaitTime (tryLockSeq, relLockSeq):
 		# assumes lock ids appear in order without gaps
 		countArr[k] = len(v)
 		v.sort()
-		lo = len(v)/3
-		hi = 2*len(v)/3
+		lo = len(v)/10
+		hi = 9*len(v)/10
 		if hi == lo:
 			hi = len (v)
 			lo = 0
@@ -305,7 +305,9 @@ def avgWaitTime (tryLockSeq, relLockSeq):
 	return (arr, countArr)
 
 def servTime (acqD, relD):
-	servTimeList = map (avgWaitTime, acqD.values(), relD.values())
+	servTimeList = []
+	for k in acqD:
+		servTimeList.append(avgWaitTime(acqD[k], relD[k]))
 
 	servTimes, counts = zip (*servTimeList)
 
@@ -442,7 +444,9 @@ def pruneAll (rMtx, tMtx, tVec, epsilon):
 def analyze (tryDic, acqDic, relDic, namesVec, numT):
 	cntMtcs = map (countMtxFromSeq, acqDic.values())
 
-	sumInterArrivalMtcs = map (sumTimeMtx, tryDic.values(), relDic.values())
+	sumInterArrivalMtcs = []
+	for i in tryDic.keys():
+		sumInterArrivalMtcs.append(sumTimeMtx(tryDic[i], relDic[i]))
 
 	cntTotalM = sumMatrices (cntMtcs)
 	sumInterArrivalTotalM = sumMatrices (sumInterArrivalMtcs)
@@ -484,5 +488,5 @@ def analyze (tryDic, acqDic, relDic, namesVec, numT):
 	for i,e in enumerate (estimate[1::2]):
 		print '%s : act: %6.0f, est: %6.0f, serv: %6.0f, est.incr: %1.3f, acc: %d' % (namesVec[i], actualWait[i], estimate[1::2][i], servTimeVec[i], estincr[i], cntTot[i])
 
-	return 
+	return zip (namesVec, actualWait, estimate[1::2], servTimeVec)
 
