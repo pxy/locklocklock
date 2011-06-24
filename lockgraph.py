@@ -436,7 +436,12 @@ def pruneAll (rMtx, tMtx, tVec, epsilon):
     return prune(rMtx, f), prune(tMtx, f), prune(tVec, f), ids
 
 
+def add_overhead (vector):
+	'''vector: array-like, times in cycles
+	'''
+	return vector + 4000/0.4 # 4 microsecs of overhead
 
+	
 #--------------------------------------------------------------------------
 # entry point of application
 
@@ -455,7 +460,11 @@ def analyze (tryDic, acqDic, relDic, namesVec, numT):
 	if sumInterArrivalTotalM.shape[0] != cntTotalM.shape[0]:
 		print "WARNING: count matrix not same size as interarrival time matrix."
 
-	servTimeVec = servTime (acqDic, relDic)
+	servTimeVec_ = servTime (acqDic, relDic)
+
+	servTimeVec = servTimeVec_
+	#servTimeVec = add_overhead(servTimeVec_)
+	
 
 	# calculate avg transition time
 	r = np.maximum(cntTotalM, np.ones_like (cntTotalM))
