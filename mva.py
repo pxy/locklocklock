@@ -7,11 +7,12 @@ from numpy.linalg import solve
 def mva(p, servrates, M):
     K = p.shape[0] #number of queues
     u = servrates
-    q_type = []
-    for i in range(K + 1):
-        q_type.append((i) % 2) # queue type, 0: inf, 1: 1-server
+    #q_type = []
+    q_type = map (lambda (i): i % 2, range(K+1))
+    #for i in range(K + 1):
+    #    q_type.append((i) % 2) # queue type, 0: inf, 1: 1-server
 
-    #An K by K identify matrix to be used later to solve the traffic equation
+    # A K by K identify matrix to be used later to solve the traffic equation
     I = np.identity(K) 
 
     #substitute the last row in the transpose matrix of I-p with an array with ones
@@ -20,10 +21,10 @@ def mva(p, servrates, M):
     tmp = (I-p).T
     r = np.vstack((tmp[:-1,:],q)) 
     
-    N = np.zeros((K,M+1)) #matrix for queue length of node K with M customers 
-    W = np.zeros((K,M+1)) #response time of node K with M customers
+    N = np.zeros((K,M+1)) # matrix for queue length of node K with M customers 
+    W = np.zeros((K,M+1)) # response time of node K with M customers
 
-    a = np.zeros(K) #Zero vector with the last element being 1.0
+    a = np.zeros(K) # Zero vector with the last element being 1.0
     a[K-1] = 1.0
 
     v = solve(r,a)
