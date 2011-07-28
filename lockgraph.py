@@ -195,22 +195,22 @@ def parseInstrList (instrFile):
 #--------------------------------------------------------------------------
 
 def parseDicTuple (prefix, ths):
-	'''Parses three related files, based on a file path prefix and the number
+	'''Parses four related files, based on a file path prefix and the number
 	of threads the files represent.
-	Assumes the data files follow the naming convention appname_{#threads}th_{acq,rel}.dat
+	Assumes the data files follow the naming convention appname_{#threads}th_{try,acq,rel}.dat
 	prefix should be the path, including the appname.
 	'''
-	tryfile = open(prefix + "_try_" + str(ths) + "th.dat")
+	tryfile = open(prefix + "_" + str(ths) + "th" + "_try.dat")
 	tryDic = lockDictFromRecords(tryfile)
 
-	acqfile = open(prefix + "_acq_" + str(ths) + "th.dat")
+	acqfile = open(prefix + "_" + str(ths) + "th" + "_acq.dat")
 	acqDic = lockDictFromRecords(acqfile)
 
-	relfile = open(prefix + "_rel_" + str(ths) + "th.dat")
+	relfile = open(prefix + "_" + str(ths) + "th" + "_rel.dat")
 	relDic = lockDictFromRecords(relfile)
 
-	#creationFile = open(prefix + "_addr_" + str(ths) + "th.dat")
-	#createVec = creationParse(creationFile)
+	creationFile = open(prefix + "_" + str(ths) + "th" + "_addr.dat")
+	createVec = creationParse(creationFile)
 	#creationFile.seek(0)
 
 	#instrVec = parseInstrList(creationFile)
@@ -218,9 +218,9 @@ def parseDicTuple (prefix, ths):
 	tryfile.close()
 	acqfile.close()
 	relfile.close()
-	#creationFile.close()
+	creationFile.close()
 
-	return (tryDic, acqDic, relDic)
+	return (tryDic, acqDic, relDic, createVec)
 
 
 # end PARSING
@@ -232,7 +232,7 @@ def lockD (acqLockDs, relLockDs):
 	return lockD
 
 
-# input is dictionary with tID as key, sequence of lock accesses as value
+
 def countMtxFromSeq(lockSeq):
 	'''Computes a nested dictionary with lock transition counts,
 	or equivalently, a transition matrix with counts.
@@ -284,10 +284,10 @@ def sumWaitingTime (trySeq, relSeq):
 
 
     
-def avgWaitTime (tryLockSeq, relLockSeq):
+def avgWaitTime (tryLockSeq, relLockSeq, perc):
 	"""Calculates average waiting time (service time + queue time) per lock
-    INPUT: tryLockSeq, relLockSeq : a tuple list of the form (lockID, timestamp)
-    """
+	INPUT: tryLockSeq, relLockSeq : a tuple list of the form (lockID, timestamp)
+	"""
 	timeD = waitingTime (tryLockSeq, relLockSeq)
 	size = max (timeD.keys()) + 1
 	arr = np.zeros(size)
@@ -296,18 +296,18 @@ def avgWaitTime (tryLockSeq, relLockSeq):
 		# assumes lock ids appear in order without gaps
 		countArr[k] = len(v)
 		v.sort()
-		lo = len(v)/10
-		hi = 9*len(v)/10
+		lo = (100-perc)*len(v)/100
+		hi = perc*len(v)/100
 		if hi == lo:
 			hi = len (v)
 			lo = 0
 		arr[k] = float(sum(v[lo:hi])) / (hi - lo)
 	return (arr, countArr)
 
-def servTime (acqD, relD):
+def servTime (acqD, relD, perc):
 	servTimeList = []
 	for k in acqD:
-		servTimeList.append(avgWaitTime(acqD[k], relD[k]))
+		servTimeList.append(avgWaitTime(acqD[k], relD[k], perc))
 
 	servTimes, counts = zip (*servTimeList)
 
@@ -445,7 +445,6 @@ def add_overhead (vector):
 #--------------------------------------------------------------------------
 # entry point of application
 
-
 def analyze (tryDic, acqDic, relDic, namesVec, numT):
 	cntMtcs = map (countMtxFromSeq, acqDic.values())
 
@@ -460,7 +459,7 @@ def analyze (tryDic, acqDic, relDic, namesVec, numT):
 	if sumInterArrivalTotalM.shape[0] != cntTotalM.shape[0]:
 		print "WARNING: count matrix not same size as interarrival time matrix."
 
-	servTimeVec_ = servTime (acqDic, relDic)
+	servTimeVec_ = servTime (acqDic, relDic, 95)
 
 	servTimeVec = servTimeVec_
 	#servTimeVec = add_overhead(servTimeVec_)
@@ -492,7 +491,7 @@ def analyze (tryDic, acqDic, relDic, namesVec, numT):
 	estincr  = estimate[1::2]/servTimeVec
 
 	# actual waiting time for numT threads
-	actualWait = servTime(tryDic, relDic)
+	actualWait = servTime(tryDic, relDic, 95)
 
 	for i,e in enumerate (estimate[1::2]):
 		print '%s : act: %6.0f, est: %6.0f, serv: %6.0f, est.incr: %1.3f, acc: %d' % (namesVec[i], actualWait[i], estimate[1::2][i], servTimeVec[i], estincr[i], cntTot[i])
