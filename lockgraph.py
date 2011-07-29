@@ -441,7 +441,32 @@ def add_overhead (vector):
 	'''
 	return vector + 4000/0.4 # 4 microsecs of overhead
 
-	
+
+def routing (tryDic, acqDic, relDic, namesVec, tIDs):
+	cntMtcs = map (lambda x: countMtxFromSeq(acqDic[x]), tIDs)
+	cntTotalM = sumMatrices (cntMtcs)
+
+	sumInterArrivalMtcs = []
+	for i in tIDs:
+		sumInterArrivalMtcs.append(sumTimeMtx(tryDic[i], relDic[i]))
+
+	cntTotalM = sumMatrices (cntMtcs)
+	#sumInterArrivalTotalM = sumMatrices (sumInterArrivalMtcs)
+
+	# sanity check
+	#if sumInterArrivalTotalM.shape[0] != cntTotalM.shape[0]:
+	#	print "WARNING: count matrix not same size as interarrival time matrix."
+
+	#servTimeVec_ = servTime (acqDic, relDic, 95)
+	#servTimeVec = servTimeVec_
+
+	# calculate avg transition time
+	#r = np.maximum(cntTotalM, np.ones_like (cntTotalM))
+	#avgInterArrivalTotalM = np.divide (sumInterArrivalTotalM, r)
+	#rout = normalizeRowWise (cntTotalM)
+	return cntTotalM
+
+
 #--------------------------------------------------------------------------
 # entry point of application
 
