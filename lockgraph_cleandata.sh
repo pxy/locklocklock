@@ -4,8 +4,17 @@
 # fetch from http://files.basex.org/releases/latest, e.g.
 # wget http://files.basex.org/releases/latest/BaseX671.jar
 
+# arg 1 : path to where the mutrace xml file is found and where the output files will be written
+# arg 2 : the new name of the files
+
+
 if [ $# -ne 2 ]; then
 	echo "Wrong number of arguments."
+	exit
+fi
+
+if [ ! -f $1 ]; then
+	echo "The first argument should be a the path to a xml file"
 	exit
 fi
 
