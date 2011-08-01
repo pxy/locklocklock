@@ -1,6 +1,14 @@
-"""A collection of tools to do a queueing network analysis on sequences
+"""SLAP-
+$ Time-stamp: <2011-08-01 14:25:58 jonatanlinden>
+
+README:
+A collection of tools to do a queueing network analysis on sequences
 of timestamps representing threads lock accesses.
+
+datafiles should have row format 'timestamp threadID lockID', and
+should be sorted by the timestamp.
 """
+
 from collections import defaultdict
 import os,re,csv,subprocess
 import numpy as np
@@ -194,22 +202,22 @@ def parseInstrList (instrFile):
 # ENTRY POINT for parsing
 #--------------------------------------------------------------------------
 
-def parseDicTuple (prefix, ths):
+def parseDicTuple (prefix):
 	'''Parses four related files, based on a file path prefix and the number
 	of threads the files represent.
-	Assumes the data files follow the naming convention appname_{#threads}th_{try,acq,rel}.dat
+	Assumes the data files follow the naming convention prefix_{try,acq,rel,addr}.dat
 	prefix should be the path, including the appname.
 	'''
-	tryfile = open(prefix + "_" + str(ths) + "th" + "_try.dat")
+	tryfile = open(prefix + "_try.dat")
 	tryDic = lockDictFromRecords(tryfile)
 
-	acqfile = open(prefix + "_" + str(ths) + "th" + "_acq.dat")
+	acqfile = open(prefix + "_acq.dat")
 	acqDic = lockDictFromRecords(acqfile)
 
-	relfile = open(prefix + "_" + str(ths) + "th" + "_rel.dat")
+	relfile = open(prefix  + "_rel.dat")
 	relDic = lockDictFromRecords(relfile)
 
-	creationFile = open(prefix + "_" + str(ths) + "th" + "_addr.dat")
+	creationFile = open(prefix + "_addr.dat")
 	createVec = creationParse(creationFile)
 	#creationFile.seek(0)
 
@@ -235,7 +243,8 @@ def lockD (acqLockDs, relLockDs):
 
 def countMtxFromSeq(lockSeq):
 	'''Computes a nested dictionary with lock transition counts,
-	or equivalently, a transition matrix with counts.
+	or equivalently, a transition matrix with counts from the lock sequence of
+	a specific thread.
 	'''
 	# use dictionary instead of matrix, since we don't know the total
 	# number of locks involved
@@ -283,14 +292,18 @@ def sumWaitingTime (trySeq, relSeq):
 	return sumWait
 
 
+
     
 def avgWaitTime (tryLockSeq, relLockSeq, perc):
 	"""Calculates average waiting time (service time + queue time) per lock
 	INPUT: tryLockSeq, relLockSeq : a tuple list of the form (lockID, timestamp)
 	"""
+	# create a dictionary indexed by lockIDs
 	timeD = waitingTime (tryLockSeq, relLockSeq)
 	size = max (timeD.keys()) + 1
 	arr = np.zeros(size)
+	# the number of accesses to each lock will be defined by the length of
+	# each dictionary value
 	countArr = np.zeros(size)
 	for k,v in timeD.iteritems():
 		# assumes lock ids appear in order without gaps
@@ -466,6 +479,8 @@ def routing (tryDic, acqDic, relDic, namesVec, tIDs):
 	#rout = normalizeRowWise (cntTotalM)
 	return cntTotalM
 
+def sumPredictedWaitingTime (waitVec, countVec):
+	return sum (map (operator.mul, waitVec, countVec))
 
 #--------------------------------------------------------------------------
 # entry point of application
