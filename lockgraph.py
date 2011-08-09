@@ -1,5 +1,5 @@
 """SLAP-
-$ Time-stamp: <2011-08-01 14:25:58 jonatanlinden>
+$ Time-stamp: <2011-08-08 11:52:27 jonatanlinden>
 
 README:
 A collection of tools to do a queueing network analysis on sequences
@@ -12,6 +12,7 @@ should be sorted by the timestamp.
 from collections import defaultdict
 import os,re,csv,subprocess
 import numpy as np
+import operator as op
 from mva import mva
 import histo
 
@@ -42,6 +43,12 @@ def shift (array, offset):
     ret = np.zeros_like(array)
     ret[offset:] = array[0:-offset]
     return ret
+
+def mergeDict(d1, d2, op=lambda x,y:x+y):
+    res = defaultdict(int,d1)
+    for k,v in d2.iteritems():
+            res[k] = op(res[k], v)
+    return res
 
 def dictToArray (dict):
     size = max(dict.iteritems())[0] + 1
@@ -291,9 +298,27 @@ def sumWaitingTime (trySeq, relSeq):
 		sumWait += rel[1] - tryL[1]
 	return sumWait
 
+def accessCntVec (lockSeq):
+	countD = defaultdict(int)
+	for l in lockSeq:
+		countD[l[0]] += 1
+	return countD
 
+def totalTimeWasted (lockD, waitTVec, servTVec):
+	lockCntLst = map (accessCntVec, lockD.itervalues())
+	totCount = reduce (mergeDict, lockCntLst, {})
+	queuingT = map (op.sub, waitTVec, servTVec)
+	waitSum = {}
+	for k,v in totCount.iteritems():
+		waitSum[k] = queuingT[k] * v
+	return sum (waitSum.itervalues())
 
-    
+def cycles_to_seconds (gHz, nCycles):
+	return (1/gHz*0.000000001)*nCycles
+
+def cycles_to_cycles (gHz1, gHz2):
+	return lambda ncycles: ncycles * gHz2/gHz1
+	
 def avgWaitTime (tryLockSeq, relLockSeq, perc):
 	"""Calculates average waiting time (service time + queue time) per lock
 	INPUT: tryLockSeq, relLockSeq : a tuple list of the form (lockID, timestamp)
@@ -449,10 +474,8 @@ def pruneAll (rMtx, tMtx, tVec, epsilon):
     return prune(rMtx, f), prune(tMtx, f), prune(tVec, f), ids
 
 
-def add_overhead (vector):
-	'''vector: array-like, times in cycles
-	'''
-	return vector + 4000/0.4 # 4 microsecs of overhead
+def add_overhead (gHz, ns):
+	return lambda vec: vec + ns*gHz
 
 
 def routing (tryDic, acqDic, relDic, namesVec, tIDs):
@@ -485,9 +508,12 @@ def sumPredictedWaitingTime (waitVec, countVec):
 #--------------------------------------------------------------------------
 # entry point of application
 
-def analyze (tryDic, acqDic, relDic, namesVec, numT):
-	cntMtcs = map (countMtxFromSeq, acqDic.values())
 
+def analyze (tryDic, acqDic, relDic, namesVec, numT, overheadF = lambda x: x):
+
+	smoothing = 1
+
+	cntMtcs = map (countMtxFromSeq, acqDic.values())
 	sumInterArrivalMtcs = []
 	for i in tryDic.keys():
 		sumInterArrivalMtcs.append(sumTimeMtx(tryDic[i], relDic[i]))
@@ -499,10 +525,10 @@ def analyze (tryDic, acqDic, relDic, namesVec, numT):
 	if sumInterArrivalTotalM.shape[0] != cntTotalM.shape[0]:
 		print "WARNING: count matrix not same size as interarrival time matrix."
 
-	servTimeVec_ = servTime (acqDic, relDic, 95)
+	servTimeVec = servTime (acqDic, relDic, 100 - smoothing)
 
-	servTimeVec = servTimeVec_
-	#servTimeVec = add_overhead(servTimeVec_)
+	#servTimeVec = servTimeVec_
+	servTimeVecWithOH = overheadF(servTimeVec)
 	
 
 	# calculate avg transition time
@@ -519,7 +545,7 @@ def analyze (tryDic, acqDic, relDic, namesVec, numT):
 
 
 	rout = normalizeRowWise (cntTotalM)
-	newRout, servTimes = insertIntermediateQs (rout, avgInterArrivalTotalM, servTimeVec)
+	newRout, servTimes = insertIntermediateQs (rout, avgInterArrivalTotalM, servTimeVecWithOH)
 
 	# just to get an idea of which lock is used a lot
 	#totAccessesEachLock = np.sum (cntP, axis=0)
@@ -531,7 +557,7 @@ def analyze (tryDic, acqDic, relDic, namesVec, numT):
 	estincr  = estimate[1::2]/servTimeVec
 
 	# actual waiting time for numT threads
-	actualWait = servTime(tryDic, relDic, 95)
+	actualWait = servTime(tryDic, relDic, 100 - smoothing)
 
 	for i,e in enumerate (estimate[1::2]):
 		print '%s : act: %6.0f, est: %6.0f, serv: %6.0f, est.incr: %1.3f, acc: %d' % (namesVec[i], actualWait[i], estimate[1::2][i], servTimeVec[i], estincr[i], cntTot[i])
