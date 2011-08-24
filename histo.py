@@ -39,6 +39,13 @@ def writeHisto (hist, name, path):
 	fd.write ('# ' + name)
 	hist.tofile(fd, sep='\n', format="%d")
 
+def writeHisto2 (hist, name, path):
+	fd = open (path + os.sep + name + ".dat", 'w')
+	fd.write ('# ' + name + '\n')
+	np.savetxt(fd, hist, delimiter=' ', fmt='%d')
+
+
+
 def writeResult (name, path, data):
 	w = csv.writer(open(path + os.sep + name + '.dat', 'w'), delimiter=' ')
 	w.writerows(data)
