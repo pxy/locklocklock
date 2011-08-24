@@ -1,5 +1,5 @@
 """SLAP-
-$ Time-stamp: <2011-08-08 11:52:27 jonatanlinden>
+$ Time-stamp: <2011-08-22 13:46:52 jonatanlinden>
 
 README:
 A collection of tools to do a queueing network analysis on sequences
@@ -10,7 +10,7 @@ should be sorted by the timestamp.
 """
 
 from collections import defaultdict
-import os,re,csv,subprocess
+import os,re,csv,subprocess,math,itertools
 import numpy as np
 import operator as op
 from mva import mva
@@ -292,7 +292,7 @@ def waitingTime (tryLockSeq, relLockSeq):
 def sumWaitingTime (trySeq, relSeq):
 	sumWait = 0
 	for i, tryL in enumerate(trySeq):
-		rel = rellSeq[i]
+		rel = relSeq[i]
 		if tryL[0] != rel[0]:
 			print "ERROR: lock sequences not synced"
 		sumWait += rel[1] - tryL[1]
@@ -303,6 +303,64 @@ def accessCntVec (lockSeq):
 	for l in lockSeq:
 		countD[l[0]] += 1
 	return countD
+
+def timeLineSeq (startSeq, endSeq):
+	timeLine = []
+	for i,st in enumerate (startSeq):
+		timeLine.append((st[1], endSeq[i][1] - st[1]))
+	return timeLine
+
+def mergeLists(lls):
+	return [item for sublist in lls for item in sublist]
+
+
+def count(firstval=0, step=1):
+    x = firstval
+    while 1:
+        yield x
+        x += step
+
+def partitionCount (tl):
+	tl2 = sorted(tl, key=lambda x: x[1])
+	counts = []
+	subgroup = itertools.groupby(tl2, key=lambda x: x[1])
+	for k, g in subgroup:
+		counts.append((k, len(list(g))))
+	return counts
+
+
+def printPartitionCount (lcl, size):
+	res = []
+	zero = zip (range(0,size), itertools.repeat(0))
+
+	histo = np.zeros((size, len(lcl)))
+	for i, cl in enumerate(lcl):
+		for ct in cl[1]:
+			histo[ct[0], i] = ct[1]
+	return histo,lcl[0][0],lcl[-1][0]
+			
+
+def avgTimeLineSeq (timeLines, timestep, end=0, aggr=lambda tl: sum(zip(*tl)[1]/len(tl))):
+	timeLine = sorted(mergeLists(timeLines))
+	start = int(timestep * math.floor(float(timeLine[0][0])/timestep))
+	if end != 0:
+		timeLine = itertools.takewhile(lambda x: x[0] < end, timeLine)
+	ret = []
+	for i in count(start, timestep):
+		onestep = list(itertools.takewhile(lambda x: x[0] < i, timeLine))
+		timeLine = itertools.dropwhile(lambda x: x[0] < i, timeLine)
+		if onestep:
+			ret.append((i, aggr(onestep)))
+		# the pythonian way of peeking at an iterator, i.e. hasnext()
+		try:
+			first = timeLine.next()
+		except StopIteration:
+			break
+		else:
+			timeLine = itertools.chain([first], timeLine)
+	return ret
+
+
 
 def totalTimeWasted (lockD, waitTVec, servTVec):
 	lockCntLst = map (accessCntVec, lockD.itervalues())
@@ -388,6 +446,20 @@ def hexToLine (createVec_, appname):
 
 	process.terminate()
 	return createVec
+
+
+def sliceSeqs (tryD, acqD, relD, start=0, end=0):
+	newTryD = {}
+	newAcqD = {}
+	newRelD = {}
+	if end != 0:
+		for k,v in tryD.iteritems():
+			newTryD[k] = list(itertools.takewhile(lambda x: x[1] < end, v))
+			newAcqD[k] = acqD[k][0:len(newTryD[k])]
+			newRelD[k] = relD[k][0:len(newTryD[k])]
+	if start != 0:
+		raise NotImplementedError
+	return (newTryD, newAcqD, newRelD)
 
 
 def lockToServTimeMap (instrVec, servTime, countVec):
@@ -509,9 +581,7 @@ def sumPredictedWaitingTime (waitVec, countVec):
 # entry point of application
 
 
-def analyze (tryDic, acqDic, relDic, namesVec, numT, overheadF = lambda x: x):
-
-	smoothing = 1
+def analyze (tryDic, acqDic, relDic, namesVec, numT, smoothing, overheadF = lambda x: x):
 
 	cntMtcs = map (countMtxFromSeq, acqDic.values())
 	sumInterArrivalMtcs = []
