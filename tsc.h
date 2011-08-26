@@ -22,7 +22,7 @@ static inline uint64_t __attribute__((always_inline))
 read_tsc_p()
 {
    uint64_t tsc;
-   __asm__ ("rdtscp\n"
+   __asm__ __volatile__ ("rdtscp\n"
 	 "shl $32, %%rdx\n"
 	 "or %%rdx, %%rax"
 	 : "=a"(tsc)

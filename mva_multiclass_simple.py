@@ -5,8 +5,6 @@ from numpy.linalg import solve
 np.set_printoptions(threshold=np.nan)
 
 #TODO: given the number of classes and maximum number of jobs in each class, return the list of all possible population vectors
-#def genAllPopuV():
-#	return [(0,0),(1,0),(0,1),(1,1),(2,0),(0,2),(2,1),(1,2),(2,2)]
 def getV(l):
 	if [(0,0)] == l:
 		return l
@@ -16,7 +14,7 @@ def getV(l):
 		s =  set(l)
 		return list(s)
 
-def getPopuV():
+
 	return [(1,0),(0,1),(1,1),(2,0),(0,2),(2,1),(1,2),(2,2)]
 
 def getDependentV((a,b)):
@@ -36,9 +34,7 @@ def getDependentV((a,b)):
 def mva_multiclass(routL, servrates, nClassL, queueType):
     K = len(servrates) #total number of queues
     n_class = len(routL) #the number of classes
-    n_threads = 0 ###get the number of threads 
-    for i in nClassL: #get the total number of threads
-	n_threads += i
+    n_threads = sum (nClassL)
     #all_popuV = genAllPopuV() #the finial population vector
     all_popuV = getV([(nClassL[0],nClassL[1])]) #the finial population vector
     e = getVisitRatios(routL)
@@ -46,7 +42,7 @@ def mva_multiclass(routL, servrates, nClassL, queueType):
     #print "The total number of queues:", K
     #print "The total number of threads:", n_threads
     #print "The total number of classes:", n_class
-    #print "The final population vector:", all_popuV
+    print "The final population vector:", all_popuV
     #step 1: initialize the number of jobs matrix, it is a matrix of dictionary with i: the node index and r: the class index as the indices and the key of the dictionary is a population matrix
     T = np.empty([K,n_class],dtype=dict)
     N = np.empty([K,n_class],dtype=dict) #N is K in the algorithm
@@ -67,7 +63,7 @@ def mva_multiclass(routL, servrates, nClassL, queueType):
 	for k in all_popuV:
 		lam[r][k] = 0.0
     #step 2.1
-    for k in getPopuV():#all_popuV:
+    for k in all_popuV:
     #all_popuV.remove((0,0))
     #for k in all_popuV:
 	#print "step 2.1 for population vector ", k
