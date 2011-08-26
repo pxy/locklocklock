@@ -41,14 +41,12 @@ def mva_multiclass(routL, servrates, nClassL, queueType):
 	n_threads += i
     #all_popuV = genAllPopuV() #the finial population vector
     all_popuV = getV([(nClassL[0],nClassL[1])]) #the finial population vector
-    #all_popuV = getV([(2,2)]) #the finial population vector
     e = getVisitRatios(routL)
     #print "The visit ratio:", e
     #print "The total number of queues:", K
     #print "The total number of threads:", n_threads
     #print "The total number of classes:", n_class
     #print "The final population vector:", all_popuV
-
     #step 1: initialize the number of jobs matrix, it is a matrix of dictionary with i: the node index and r: the class index as the indices and the key of the dictionary is a population matrix
     T = np.empty([K,n_class],dtype=dict)
     N = np.empty([K,n_class],dtype=dict) #N is K in the algorithm
@@ -97,24 +95,24 @@ def mva_multiclass(routL, servrates, nClassL, queueType):
 		#print the throughput of each class for each queue
 	if k == (2,2):
 		#for i in range(0,K): it's enough to print the info for one queue
-		lam1 = e[0][3]*lam[0][k]
-		lam2 = e[1][3]*lam[1][k]
+		lam1 = e[0][2]*lam[0][k]
+		lam2 = e[1][2]*lam[1][k]
 		#print "Throughput for queue ", i, " class 1: ", lam1, "class 2:",lam2, "throughput difference: ", lam1 - lam2
-		print lam1, lam2, "throughput difference: ", lam1 - lam2
+		#print lam1, lam2, "throughput difference: ", lam1 - lam2
     #step 2.3
     	for i in range(0,K):
     		for r in range(0,n_class):
 			N[i][r][k] = lam[r][k]*T[i][r][k]*e[r][i]
-			print "N",i+1,r+1,k, "=", lam[r][k],"*",T[i][r][k],"*",e[r][i], "=",N[i][r][k]
+	if k == (2,2):
+    		for i in range(0,K):
+    			for r in range(0,n_class):
+				print "N",i+1,r+1,k, "=", lam[r][k],"*",T[i][r][k],"*",e[r][i], "=",N[i][r][k]
 			
-    return 0
+    return  [lam1,lam2]
     #use the routL to generate  the visit ratios
     #from nJobList, get the number of jobs in each queue and number of queues
 def getVisitRatios(routL):
-    l = []
-    for i in routL:
-	l.append(getVisitRatio(i))
-    return l
+    return map(getVisitRatio, routL)
 
 def getVisitRatio(p):
     K = len(p) #number of queues
@@ -131,13 +129,48 @@ def getVisitRatio(p):
     a[K-1] = 1.0
     v = solve(r,a)
     return v
+def updateRates(ratesL, adjustIndex, newVal):
+	newL = ratesL[:]
+	newL[adjustIndex[0]][adjustIndex[1]] = newVal
+	return newL
+		
 
+def adjustRate(routL, servrates, cusL, qTypeL, adjustIndex, maxError):
+	#print "In adjustRate:"
+	rateToAdjust = servrates[adjustIndex[0]][adjustIndex[1]]
+	lamL = mva_multiclass(routL, servrates, cusL, qTypeL)
+	v = 0.1
+	diff = lamL[0] - lamL[1]
+	while math.fabs(diff) > maxError:
+		#print "oldServrates:"
+		#print servrates
+		#print "lambda difference:"
+		#print lamL[0] - lamL[1]
+		if diff > 0: #(the writer is faster than the reader)
+			rateToAdjust += v#increase the rate of the reader
+		else:
+			rateToAdjust -= v#decrease the rate of the reader
+		#plug ratetoAdjust back to the rates
+		servrates = updateRates(servrates, adjustIndex, rateToAdjust)
+		lamL = mva_multiclass(routL, servrates, cusL, qTypeL)
+		#print "newServrates:"
+		#print servrates
+		v = v/2
+		if diff == lamL[0] - lamL[1]:
+			break
+		diff = lamL[0] - lamL[1]
+	return servrates
+	
 rout = [[0,1,0,0],[0,0,1,0],[0,0,0,1],[1,0,0,0]]
-for x in range(1,11): 
+for x in range(10,11): 
 	#print "service rate for the reader local computation: ",x
-	servrates = [[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1000.0]] #it should be 6 queues
-	mva_multiclass([rout,rout], servrates, [2,2], [1,0,1,0])
-	#servrates2 = [[1.0,1.0],[1.0,1.0],[1.0,x],[2.0,2.0]] #it should be 6 queues
-	#print "adjusting the service rate of the reader threads:"
-	#print "The adjusted service rates: ", servrates2
-	#mva_multiclass([rout,rout], servrates2, [2,2], [1,0,1,0])
+	servrates = [[1.0,1.0],[1.0,1.0],[1.0,x],[1.0,0.7]]
+	la = mva_multiclass([rout,rout], servrates, [2,2], [1,0,1,0])
+	print "lambda before adjusting rates"
+	print la[0],la[1]
+	print "The adjusted rates for "
+	print x
+	newRates = adjustRate([rout,rout], servrates, [2,2], [1,0,1,0], [3,1],la[0]/100.0)
+	print newRates
+	l = mva_multiclass([rout,rout], newRates, [2,2], [1,0,1,0])
+	print l[0],l[1]
