@@ -1,5 +1,5 @@
 """SLAP-
-$ Time-stamp: <2011-08-26 16:56:45 jonatanlinden>
+$ Time-stamp: <2011-08-29 17:29:46 jonatanlinden>
 
 README:
 A collection of tools to do a queueing network analysis on sequences
@@ -10,11 +10,13 @@ should be sorted by the timestamp.
 """
 
 from collections import defaultdict
-import os,re,csv,subprocess,math,itertools
+import os,re,csv,subprocess,math
 import numpy as np
 import operator as op
 from mva import mva
+from mva_multiclass_simple import mva_multiclass
 import histo
+from itertools import *
 
 # CONSTANTS
 
@@ -57,9 +59,10 @@ def dictToArray (dict):
         arr[k] = v
     return arr
 
-def dictToMatrix (dict):
-    size = findGr8estKey (dict) + 1
-    mtx = np.zeros ((size,size))
+def dictToMatrix (dict, dim = 0):
+    if dim == 0:
+        dim = findGr8estKey (dict) + 1
+    mtx = np.zeros ((dim, dim))
     for row in dict:
         for col in dict[row]:
             mtx[row,col] = dict[row][col]
@@ -261,7 +264,7 @@ def lockD (acqLockDs, relLockDs):
 
 
 
-def countMtxFromSeq(lockSeq):
+def countMtxFromSeq(lockSeq, dim):
     '''Computes a nested dictionary with lock transition counts,
     or equivalently, a transition matrix with counts from the lock sequence of
     a specific thread.
@@ -273,7 +276,7 @@ def countMtxFromSeq(lockSeq):
     for lID in lockSeq[1:]:
         lockD[last][lID[0]] += 1
         last = lID[0]
-    return dictToMatrix(lockD)
+    return dictToMatrix(lockD, dim)
 
 # FIX NOW !
     # transition time is:
@@ -333,27 +336,27 @@ def totalTimeWasted (anyDic, waitTVec, servTVec):
 def cycles_to_seconds (gHz, nCycles):
     return (1/gHz*0.000000001)*nCycles
 
-def avgWaitTime (tryLockSeq, relLockSeq, perc=100):
+def avgWaitTime (tryLockSeq, relLockSeq, perc=100, dim=0):
     """Calculates average waiting time (service time + queue time) per lock
     INPUT: tryLockSeq, relLockSeq : a tuple list of the form (lockID, timestamp)
     """
     # create a dictionary indexed by lockIDs
     timeD = waitingTime (tryLockSeq, relLockSeq)
-    size = max (timeD.keys()) + 1
-    arr = np.zeros(size)
+    if dim==0:
+        dim = max (timeD.keys()) + 1
+    arr = np.zeros(dim)
     # the number of accesses to each lock will be defined by the length of
     # each dictionary value
-    countArr = np.zeros(size)
+    countArr = np.zeros(dim)
     for k,v in timeD.iteritems():
-        # assumes lock ids appear in order without gaps
         countArr[k] = len(v)
         v.sort()
         hi = perc*len(v)/100
         arr[k] = float(sum(v[0:hi])) / (hi)
     return (arr, countArr)
 
-def servTime (acqD, relD, perc=100):
-    servTimeList = map (lambda x,y: avgWaitTime(x,y, perc), acqD.values(), relD.values())
+def servTime (acqD, relD, perc=100, dim=0):
+    servTimeList = map (lambda x,y: avgWaitTime(x,y, perc, dim), acqD.values(), relD.values())
     servTimes, counts = zip (*servTimeList)
     servTimesMtx = listOfArrToMtx (servTimes)
     countMtx = listOfArrToMtx (counts)
@@ -362,8 +365,8 @@ def servTime (acqD, relD, perc=100):
     return np.average (servTimesMtx, axis=0, weights=norms)
 
 
-def sumTimeMtx (trySeq, relSeq):
-    return dictToMatrix (timedTransitions (trySeq, relSeq))
+def sumTimeMtx (trySeq, relSeq, dim = 0):
+    return dictToMatrix (timedTransitions (trySeq, relSeq), dim)
 
 def avgTimeMtx (trySeq, relSeq, countM):
     '''Generates a matrix containing the avg interarrival times between locks
@@ -465,6 +468,10 @@ def insertIntermediateQs (rMatrix, tMatrix, tArray):
     supposing that rMatrix is a routing matrix and tMatrix is a matrix with
     the interarrival times between the locks.
     '''
+
+    if (rMatrix.shape[0] != len(tArray)):
+        print "WARNING: Routing matrix differ from size of service time vector" 
+    
     # create output matrices (twice as big)
     size = rMatrix.shape[0]
     r = np.zeros(shape=(size*2, size*2))
@@ -495,14 +502,13 @@ def pruneAll (rMtx, tMtx, tVec, epsilon):
     return prune(rMtx, f), prune(tMtx, f), prune(tVec, f), ids
 
 
-def routingCntMtx (anyL):
+def routingCntMtx (anyL, dim = 0):
     '''A matrix with the number of transitions between locks for each thread
     '''
-    return sumMatrices (map (countMtxFromSeq, anyL))
+    return sumMatrices ([countMtxFromSeq(x, dim) for x in anyL])
 
-def interArrivalMtx (tryDic, relDic):
-    return sumMatrices (map (sumTimeMtx, tryDic, relDic))
-
+def interArrivalMtx (tryDic, relDic, dim=0):
+    return sumMatrices ([sumTimeMtx(x, y, dim) for (x,y) in zip(tryDic, relDic)])
 
 
 def multi_analyze (tryDic, acqDic, relDic, namesVec, classL):
@@ -510,25 +516,28 @@ def multi_analyze (tryDic, acqDic, relDic, namesVec, classL):
     routCntL = []
     servTimeVecL = []
     avgIAML = []
+    nLocks = 57
     for cl in classL:
         trySeqL = op.itemgetter(*cl)(tryDic.values())
         acqSeqL = op.itemgetter(*cl)(acqDic.values())
         relSeqL = op.itemgetter(*cl)(relDic.values())
-        routCntL.append(routingCntMtx(trySeqL))
-        servTimeVecL.append(servTime(acqDic, relDic))
+        routCntL.append(routingCntMtx(trySeqL, nLocks))
+        servTimeVecL.append(servTime(acqDic, relDic, dim=nLocks))
         r = np.maximum(routCntL[-1], np.ones_like (routCntL[-1]))
-        sumInterArrivalM = interArrivalMtx (trySeqL, relSeqL)
+        sumInterArrivalM = interArrivalMtx (trySeqL, relSeqL, nLocks)
         avgIAML.append(np.divide (sumInterArrivalM, r))
 
-    routL = map (normalizeRowWise, routCntL)            
+    routL = map (normalizeRowWise, routCntL)
     IQs = map (insertIntermediateQs, routL, avgIAML, servTimeVecL)
     newRoutL, newServTimeVecL = zip (*IQs)
 
+    # a class/serv.time.vector matrix
     servTimeM = np.zeros((len(classL), len(newServTimeVecL[0])))
     for i, x in enumerate (newServTimeVecL):
         servTimeM[i] = x
+    qt = list(islice(cycle((0,1)), nLocks*2))
 
-    return servTimeM
+    return newRoutL, servTimeM, classL, qt
 
 #--------------------------------------------------------------------------
 # entry point of application

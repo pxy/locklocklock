@@ -53,11 +53,10 @@ def writeResult (name, path, data):
 def maxLockdist (timeline):
     maxval = 0
     pos = 0
-    for i, t in enumerate (timeline):
-        if i + 1 < 214878: 
-            if timeline[i+1][0] - t[0] > maxval:
-                maxval = timeline[i+1][0] - t[0]
-                pos = i
+    for i, t in enumerate (timeline[1:], 1):
+        if t[0] - timeline[i-1][0] > maxval:
+            maxval = t[0] - timeline[i-1][0]
+            pos = i
     return (maxval, pos)
 
 
