@@ -124,7 +124,7 @@ def mva_multiclass(routL, servrates, nClassL, queueType):
             for i in range(0,K):
                 for r in range(0,n_class):
                     print "N",i+1,r+1,k, "=", lam[r][k],"*",T[i][r][k],"*",e[r][i], "=",N[i][r][k]
-            return  T
+            return  [lam1,lam2]
 
 
 def getVisitRatios(routL):
@@ -184,15 +184,15 @@ def runmepan(msg):
     if msg != 'imhappy':
         return 0
     rout = [[0,1,0,0],[0,0,1,0],[0,0,0,1],[1,0,0,0]]
-    for x in range(10,11): 
-	#print "service rate for the reader local computation: ",x
-	servrates = [[1.0,1.0],[1.0,1.0],[1.0,x],[1.0,0.7]]
-	la = mva_multiclass([rout,rout], servrates, [2,2], [1,0,1,0])
-	print "lambda before adjusting rates"
-	print la[0],la[1]
-	print "The adjusted rates for "
-	print x
-	newRates = adjustRate([rout,rout], servrates, [2,2], [1,0,1,0], [3,1],la[0]/100.0)
-	print newRates
-	l = mva_multiclass([rout,rout], newRates, [2,2], [1,0,1,0])
-	print l[0],l[1]
+    for x in range(10,11):
+        #print "service rate for the reader local computation: ",x
+        servrates = [[1.0,1.0],[1.0,1.0],[1.0,x],[1.0,0.7]]
+        la = mva_multiclass([rout,rout], servrates, [2,2], [1,0,1,0])
+        print "lambda before adjusting rates"
+        print la[0],la[1]
+        print "The adjusted rates for "
+        print x
+        newRates = adjustRate([rout,rout], servrates, [2,2], [1,0,1,0], [3,1],la[0]/100.0)
+        print newRates
+        l = mva_multiclass([rout,rout], newRates, [2,2], [1,0,1,0])
+        print l[0],l[1]
