@@ -1,5 +1,5 @@
 """SLAP-
-$ Time-stamp: <2011-08-29 17:29:46 jonatanlinden>
+$ Time-stamp: <2011-08-30 16:19:40 jonatanlinden>
 
 README:
 A collection of tools to do a queueing network analysis on sequences
@@ -531,13 +531,16 @@ def multi_analyze (tryDic, acqDic, relDic, namesVec, classL):
     IQs = map (insertIntermediateQs, routL, avgIAML, servTimeVecL)
     newRoutL, newServTimeVecL = zip (*IQs)
 
+    # remember which queues are unused and filter them
+    
+
     # a class/serv.time.vector matrix
     servTimeM = np.zeros((len(classL), len(newServTimeVecL[0])))
     for i, x in enumerate (newServTimeVecL):
         servTimeM[i] = x
     qt = list(islice(cycle((0,1)), nLocks*2))
 
-    return newRoutL, servTimeM, classL, qt
+    return newRoutL, servTimeM.T, classL, qt
 
 #--------------------------------------------------------------------------
 # entry point of application

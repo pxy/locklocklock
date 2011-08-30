@@ -27,17 +27,21 @@ def dependentsV(tup):
 #inputs: routL: routing matrix list
 #	 servrates: service rates for the queues for different job classes, should be a #queues x # classes matrix
 #	 nClassL: a list of the number of threads in each class, the length of the list is the number of classes
-def mva_multiclass(routL, servrates, nClassL, queueType):
-    K = servrates.shape[0] #total number of queues
-    n_class = len(routL) #the number of classes
-    n_threads = sum (nClassL)
+def mva_multiclass(routL, servrates, nClassL, queueType, vr=None):
+    K = servrates.shape[0] #total number of queues and classes
+    n_class = len(routL)
     all_popuV = list (getPopulationVs(nClassL, defaultdict(int))) #the final population vector
-
-    e = np.array(getVisitRatios(routL))
-    # Question: what does the rows of e describe and 
-    print "The visit ratio:", e
-
-    #STEP 1: initialize the number of jobs matrix, it is a matrix of dictionary with i:
+    if vr != None:
+        e = vr
+    else:
+        e = np.array(getVisitRatios(routL))
+    #if np.where(e<0.0) or np.where(servrates == 0.0):
+    #    print "WARNING: bad input"
+    #    return -1
+    
+    #STEP 1: initialize the number of jobs matrices,
+    # N is a dictionary of matrices, the key is the pop.vectors
+    # Rows are the different values for the classes, hence #rows == #queues
     # the node index and r: the class index as the indices and the key of the dictionary is a population matrix
     T = {}
     N = {}
@@ -47,49 +51,48 @@ def mva_multiclass(routL, servrates, nClassL, queueType):
         N[k] = np.zeros((K,n_class))
         lam[k] = np.zeros(n_class)
 
-    #STEP 2.1
+    # ***BEGIN***
+
     for k in all_popuV:
-    #print "step 2.1 for population vector ", k
+        #STEP 2.1
+        # calculate T
         for i in range(0,K):
-            #for r in range(0,n_class):
             if queueType[i] == 1:#if node i is an infinite server node, the response time is just the service time
                 T[k][i] =  1.0/servrates[i]
             else: #if node i is a single server queue
-                sum_less = 0.0 
+                A_k = 0.0 
                 l = dependentsV(k)
                 for z in l:
                     # for each class, sum together the total number of customers waiting
-                    sum_less += sum(N[z][i])
+                    # A_k is the total number of jobs waiting at the arrival of a new job
+                    A_k += sum(N[z][i])
 
-                T[k][i] = (1.0/servrates[i])*(1.0+sum_less) # R_ck
-            #print "T[",i+1,"][",r+1,"][",k, "] = ", T[i][r][k], "1/u: ", 1.0/servrates[i][r], " sum_less: ", sum_less
-
+                T[k][i] = (1.0/servrates[i])*(1.0+A_k) # R_ck
+                
+        print T[k] 
         #STEP 2.2
-        for r in range(0,n_class):
-            #for each class/row, sum together expected time
-            sum2 = np.dot(e[r, :],T[k][:,r])
-			#print "e[",i+1,"]",e[i],"T[",i+1,"]","[",r+1,"]","[",k,"]",T[i][r][k],"print sum2 in 2.2:", sum2
-            lam[k][r] = k[r]/sum2 # 
-		#print "lam",r+1,k, "=", lam[r][k]
+        #for each class/row, sum together expected time
+        sum2 = np.dot(e, T[k])
+        lam[k] = np.array(k)/np.diag(sum2)
 
         #STEP 2.3
         #for each class and each server, update est. no. of customers.
-        # Question: why do we only use half of the values in e?
-        for i in range(0,K):
-            N[k][i] = lam[k]*T[k][i]*e[:,i]
+        N[k] = T[k]*lam[k]*e.T # lam times visit ratio is throughput
 
-    # END for over pop.vectors.
+    # ***END*** for loop over pop.vectors.
 
-    lam1 = e[0][2]*lam[k][0]
-    lam2 = e[1][2]*lam[k][1]
+    #lam1 = e[0][2]*lam[k][0]
+    #lam2 = e[1][2]*lam[k][1]
     #print "Throughput for queue ", i, " class 1: ", lam1, "class 2:",lam2, "throughput difference: ", lam1 - lam2
 
-
-    for i in range(0,K):
+    U = np.zeros((K, n_class))
+    for i in range(K):
         for r in range(0,n_class):
             print "N",k,i+1,r+1, "=", lam[k][r],"*",T[k][i][r],"*",e[r][i], "=",N[k][i][r]
+        U[i,:] = 1.0/servrates[i]*e[:,i]*lam[nClassL]
+    
 
-    return  [lam1, lam2], T[nClassL]
+    return  T[nClassL], N[nClassL], U
 
 
 def getVisitRatios(routL):
@@ -160,13 +163,41 @@ def runmepan(msg):
         l,T = mva_multiclass([rout,rout], newRates, (2,2), [1,0,1,0])
         print l[0],l[1]
 
+
+# this test should return true :)
 def closedsingleclasstest():
     p_back = 0.5
     R = np.zeros((7,7))
+    R[0,1] = 1.0
     R[1,2:5] = 1.0/3
     R[2:5,5:7] = (1-p_back)/2.0
-    R[2:5,1] = p_back
+    R[2:5,0] = p_back
     R[5:7,2:5] = 1/3.0
-    S = np.array([0.2, 0.5, 0.8, 0.8, 0.8, 1.8, 1.8])
-    return mva_multiclass([R], S, (20,), [1,0,0,0,0,0,0])
-    #return S, R
+    S = np.array([0.2, 2, 1/0.8, 1/0.8, 1/0.8, 1/1.8, 1/1.8])
+    correct_answer = np.array([[ 5.01121098],
+       [ 0.5011211 ],
+       [ 0.53452917],
+       [ 0.53452917],
+       [ 0.53452917],
+       [ 0.90201798],
+       [ 0.90201798]])
+    t, n, answer = mva_multiclass([R], S, (20,), [1,0,0,0,0,0,0])
+    return all(a < 0.00001 for a in np.absolute(answer - correct_answer))
+    
+
+def closemclasstest():
+    S = np.array([[1, 0.25, 0.125, 1/12.0],
+                  [0.5, 0.2, 0.1, 1/16.0]])
+    e = np.array([[1, 0.4, 0.4, 0.2],
+                  [1, 0.4, 0.3, 0.3]])
+    nPop = (1,2)
+
+    print e
+    return mva_multiclass ([], S.T, nPop, [0,0,0,1], vr = e)
+
+def closedmclasstest2():
+    S = np.array([[1,1/2.0],[1/3.0,1/4.0]])
+    r = np.array([[0, 1], [1, 0]])
+    nPop = (1,1)
+    return mva_multiclass ([r, r], S, nPop, [0,0])
+
