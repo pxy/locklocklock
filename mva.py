@@ -20,9 +20,10 @@ def mva(p, u, M):
         #step 1
         # for each queue, update the waiting time
         W[:,m] = (q_type*N[:,m-1] + 1.0)/u
+
 		#step2
-        sum = np.dot (W[:,m],v)
-        lam = m/sum
+        lam = m/np.dot (W[:,m],v)
+
         #step3
         N[:,m] = lam*v*W[:,m]
 

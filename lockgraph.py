@@ -1,5 +1,5 @@
 """SLAP-
-$ Time-stamp: <2011-08-30 16:19:40 jonatanlinden>
+$ Time-stamp: <2011-08-30 20:03:35 jonatanlinden>
 
 README:
 A collection of tools to do a queueing network analysis on sequences
@@ -540,7 +540,10 @@ def multi_analyze (tryDic, acqDic, relDic, namesVec, classL):
         servTimeM[i] = x
     qt = list(islice(cycle((0,1)), nLocks*2))
 
-    return newRoutL, servTimeM.T, classL, qt
+    servTimeM2 = 1.0/servTimeM.T
+    servTimeM2[servTimeM.T == 0.0] = 0.0
+
+    return newRoutL, servTimeM2, tuple(map(len, classL)), qt
 
 #--------------------------------------------------------------------------
 # entry point of application
