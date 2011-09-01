@@ -1,5 +1,5 @@
 """SLAP-
-$ Time-stamp: <2011-08-31 21:44:29 jonatanlinden>
+$ Time-stamp: <2011-09-01 11:46:31 jonatanlinden>
 
 README:
 A collection of tools to do a queueing network analysis on sequences
@@ -560,7 +560,7 @@ def multi_analyze (tryDic, acqDic, relDic, namesVec, classL):
 
 def analyze (tryDic, acqDic, relDic, namesVec, numT, smoothing, overheadF = lambda x: x):
 
-    cntTotalM = routingCntMtx(tryDic)
+    cntTotalM = routingCntMtx(tryDic.values())
     sumInterArrivalTotalM = interArrivalMtx (tryDic.values(), relDic.values())
 
     # sanity check
@@ -581,7 +581,6 @@ def analyze (tryDic, acqDic, relDic, namesVec, numT, smoothing, overheadF = lamb
     # insert intermediate infinite server qs to represent the interarrival times
     # service time is calculated as the weighted average of the incoming traffic
     #newRout, servTimes = insertIntermediateQs (routP, avgInterArrivalP, tVecP)
-
 
     rout = normalizeRowWise (cntTotalM)
     newRout, servTimes = insertIntermediateQs (rout, avgInterArrivalTotalM, servTimeVecWithOH)

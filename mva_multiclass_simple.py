@@ -7,24 +7,8 @@ from collections import defaultdict
 np.set_printoptions(threshold=np.nan)
 
 
-def getPopulationVs2 (nClassL):
-    return product(*[range(i+1) for i in nClassL])
-
-def getPopulationVs (nClassL, exists):
-    if exists[nClassL]:
-        return []
-    else:
-        exists[nClassL] = 1
-        l = chain(*[(getPopulationVs(x, exists)) for x in dependentsV(nClassL)])
-        return chain(l, [nClassL])
-
-
-def unitVs (dim):
-    return map (tuple, np.identity(dim, dtype=int))
-
-def dependentsV(tup):
-    units = unitVs (len(tup))
-    return filter (lambda x: all(i >= 0 for i in x), [tuple(np.subtract(tup,x)) for x in units])
+def getPopulationVs (nClassL):
+    return list(product(*[range(i+1) for i in nClassL]))
 
 def dependentV(tup, c):
     unit = unitVs(len(tup))[c]
@@ -40,7 +24,7 @@ def mva_multiclass(routL, servrates, nClassL, queueType, vr=None):
     #total number of queues and classes
     K = servrates.shape[0] 
     n_class = len(routL)
-    all_popuV = list (getPopulationVs(nClassL, defaultdict(int))) #the final population vector
+    all_popuV = getPopulationVs(nClassL)
     if vr != None:
         e = vr
     else:
@@ -92,7 +76,6 @@ def mva_multiclass(routL, servrates, nClassL, queueType, vr=None):
     #lam1 = e[0][2]*lam[k][0]
     #lam2 = e[1][2]*lam[k][1]
     #print "Throughput for queue ", i, " class 1: ", lam1, "class 2:",lam2, "throughput difference: ", lam1 - lam2
-
 
     #for i in range(K):
         #for r in range(0,n_class):

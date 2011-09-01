@@ -17,6 +17,7 @@ def mva(p, u, M):
 
     for m in range(1,M+1): #[1..M] #loop over the number of customers
         # first column (m) is always zero
+
         #step 1
         # for each queue, update the waiting time
         W[:,m] = (q_type*N[:,m-1] + 1.0)/u
