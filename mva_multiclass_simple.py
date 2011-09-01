@@ -7,6 +7,9 @@ from collections import defaultdict
 np.set_printoptions(threshold=np.nan)
 
 
+def getPopulationVs2 (nClassL):
+    return product(*[range(i+1) for i in nClassL])
+
 def getPopulationVs (nClassL, exists):
     if exists[nClassL]:
         return []
@@ -14,6 +17,7 @@ def getPopulationVs (nClassL, exists):
         exists[nClassL] = 1
         l = chain(*[(getPopulationVs(x, exists)) for x in dependentsV(nClassL)])
         return chain(l, [nClassL])
+
 
 def unitVs (dim):
     return map (tuple, np.identity(dim, dtype=int))
@@ -42,34 +46,29 @@ def mva_multiclass(routL, servrates, nClassL, queueType, vr=None):
     else:
         e = np.array(getVisitRatios(routL))
 
-    #if np.where(e<0.0) or np.where(servrates == 0.0):
-    #    print "WARNING: bad input"
-    #    return -1
-
-    e[e < 0.0] = 0.0
-
+    if np.any(e[e < 0.0]):
+        print "WARNING: negative visit ratios"
     
     
     #STEP 1: initialize the number of jobs matrices,
-    # N is a dictionary of matrices, the key is the pop.vectors
+    # N and T are dictionaries of matrices, the keys are the pop.vectors
     # Rows are the different values for the classes, hence #rows == #queues
-    # the node index and r: the class index as the indices and the key of the dictionary is a population matrix
+    # Columns are the classes, hence index [k][q,c] is the value for queue q and class c,
+    # when the population for each class is specified by k
+    # lam is throughput
     T = {}
     N = {}
-    lam = {} # the rate of each class for a specific population vector
+    lam = {} 
     for k in all_popuV:
         T[k] = np.zeros((K,n_class))
         N[k] = np.zeros((K,n_class))
         lam[k] = np.zeros(n_class)
-
     # ***BEGIN ALGO***
 
     for k in all_popuV:
         #STEP 2.1
         # calculate T
-
         for i in range(K): # queues
-            # T[k][i] = (1.0/2*servrates[i])*(1.0+A_k[i]) + (2 - 1)*(1 - (1/2)*)
             if queueType[i] == 1:#if node i is an infinite server node, the response time is just the service time
                 T[k][i] =  1.0/servrates[i]
             else: #if node i is a single server queue
@@ -77,38 +76,29 @@ def mva_multiclass(routL, servrates, nClassL, queueType, vr=None):
                 # A_k is the total number of jobs waiting at the arrival of a new job
                 A_k = np.array([N[dependentV(k, x)][i].sum() for x in range(n_class)])
                 T[k][i] = (1.0/servrates[i])*(1.0+A_k) # R_ck
-            T[k][i][servrates[i] == 0.0] = 0.0
 
         #STEP 2.2
         # calculate throughput 
         #for each class/row, sum together expected time
         sum2 = np.diag(np.dot(e, T[k]))
         lam[k] = np.array(k)/sum2
-
+        
         #STEP 2.3
         #for each class and each server, update est. no. of customers in server.
-        N[k] = T[k]*lam[k]*e.T # 
-
-        print N[k]
+        N[k] = T[k]*lam[k]*e.T #
+        
     # ***END ALGO*** for loop over pop.vectors.
 
     #lam1 = e[0][2]*lam[k][0]
     #lam2 = e[1][2]*lam[k][1]
     #print "Throughput for queue ", i, " class 1: ", lam1, "class 2:",lam2, "throughput difference: ", lam1 - lam2
 
-    U = np.zeros((K, n_class))
-    for i in range(K):
+
+    #for i in range(K):
         #for r in range(0,n_class):
             #print "N",k,i+1,r+1, "=", lam[k][r],"*",T[k][i][r],"*",e[r][i], "=",N[k][i][r]
-        U[i,:] = 1.0/servrates[i]*e[:,i]*lam[nClassL]
-    
 
     return  T[nClassL], N[nClassL]
-
-
-def probstate (j, m, vr, servrates, lam):
-    if j == 0:
-        temp = (vr / servrates ) * lam 
 
 
 def getVisitRatios(routL):
@@ -190,32 +180,37 @@ def closedsingleclasstest():
     R[2:5,0] = p_back
     R[5:7,2:5] = 1/3.0
     S = np.array([0.2, 2, 1/0.8, 1/0.8, 1/0.8, 1/1.8, 1/1.8])
-    correct_answer = np.array([[ 5.01121098],
-       [ 0.5011211 ],
-       [ 0.53452917],
-       [ 0.53452917],
-       [ 0.53452917],
-       [ 0.90201798],
-       [ 0.90201798]])
-    t, n, answer = mva_multiclass([R], S, (20,), [1,0,0,0,0,0,0])
-    return all(a < 0.00001 for a in np.absolute(answer - correct_answer))
+    correct_answer = np.array([[  5.        ],
+                               [  0.97950777],
+                               [  1.67066031],
+                               [  1.67066031],
+                               [  1.67066031],
+                               [ 10.63442802],
+                               [ 10.63442802]])
+    t,n = mva_multiclass([R], S, (20,), [1,0,0,0,0,0,0])
+    return np.alltrue(np.absolute(t - correct_answer) < 0.00001)
     
 
-def closedmclasstest():
+def closedmclasstest1():
     S = np.array([[1, 0.25, 0.125, 1/12.0],
                   [0.5, 0.2, 0.1, 1/16.0]])
     e = np.array([[1, 0.4, 0.4, 0.2],
                   [1, 0.4, 0.3, 0.3]])
     nPop = (1,2)
-
-    print e
     return mva_multiclass ([], S.T, nPop, [0,0,0,1], vr = e)
 
 def closedmclasstest2():
     S = np.array([[1,1/2.0],[1/3.0,1/4.0]])
     r = np.array([[0, 1], [1, 0]])
     nPop = (1,1)
-    return mva_multiclass ([r, r], S, nPop, [0,0])
+    correct_answer = np.array([[ 1.33333333,  2.5       ],
+                               [ 5.        ,  7.        ]])
+
+
+    t, n = mva_multiclass ([r, r], S, nPop, [0,0])
+    return np.alltrue(np.absolute(t - correct_answer) < 0.00001)
+
+
 
 
     

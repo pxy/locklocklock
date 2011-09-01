@@ -1,5 +1,5 @@
 """SLAP-
-$ Time-stamp: <2011-08-30 20:03:35 jonatanlinden>
+$ Time-stamp: <2011-08-31 21:44:29 jonatanlinden>
 
 README:
 A collection of tools to do a queueing network analysis on sequences
@@ -12,6 +12,7 @@ should be sorted by the timestamp.
 from collections import defaultdict
 import os,re,csv,subprocess,math
 import numpy as np
+import numpy.ma as ma
 import operator as op
 from mva import mva
 from mva_multiclass_simple import mva_multiclass
@@ -305,6 +306,7 @@ def waitingTime (trySeq, relSeq):
         timeD[rel[0]].append(rel[1] - tryL[1])
     return timeD
 
+
 def sumWaitingTime (trySeq, relSeq):
     sum (map (op.sub, relSeq, trySeq))
     sumWait = 0
@@ -315,14 +317,17 @@ def sumWaitingTime (trySeq, relSeq):
         sumWait += rel[1] - tryL[1]
     return sumWait
 
+
 def accessCntVec (lockSeq):
     countD = defaultdict(int)
     for l in lockSeq:
         countD[l[0]] += 1
     return dictToArray(countD)
 
+
 def sumPredictedWaitingTime (waitVec, countVec):
     return sum (map (operator.mul, waitVec, countVec))
+
 
 def totalTimeWasted (anyDic, waitTVec, servTVec):
     lockCntLst = map (accessCntVec, anyDic.itervalues())
@@ -333,8 +338,10 @@ def totalTimeWasted (anyDic, waitTVec, servTVec):
         waitSum[k] = queuingT[k] * v
     return sum (waitSum.itervalues())
 
+
 def cycles_to_seconds (gHz, nCycles):
     return (1/gHz*0.000000001)*nCycles
+
 
 def avgWaitTime (tryLockSeq, relLockSeq, perc=100, dim=0):
     """Calculates average waiting time (service time + queue time) per lock
@@ -355,18 +362,21 @@ def avgWaitTime (tryLockSeq, relLockSeq, perc=100, dim=0):
         arr[k] = float(sum(v[0:hi])) / (hi)
     return (arr, countArr)
 
-def servTime (acqD, relD, perc=100, dim=0):
-    servTimeList = map (lambda x,y: avgWaitTime(x,y, perc, dim), acqD.values(), relD.values())
+
+def servTime (acqSeqL, relSeqL, perc=100, dim=0):
+    servTimeList = map (lambda x,y: avgWaitTime(x,y, perc, dim), acqSeqL, relSeqL)
     servTimes, counts = zip (*servTimeList)
     servTimesMtx = listOfArrToMtx (servTimes)
     countMtx = listOfArrToMtx (counts)
     # norm of columns
     norms = normalizeRowWise(countMtx.T).T
-    return np.average (servTimesMtx, axis=0, weights=norms)
+    ma_servTimesMtx = ma.array(servTimesMtx, mask = servTimesMtx == 0)
+    return ma.average (ma_servTimesMtx, axis=0, weights=norms)
 
 
 def sumTimeMtx (trySeq, relSeq, dim = 0):
     return dictToMatrix (timedTransitions (trySeq, relSeq), dim)
+
 
 def avgTimeMtx (trySeq, relSeq, countM):
     '''Generates a matrix containing the avg interarrival times between locks
@@ -475,7 +485,8 @@ def insertIntermediateQs (rMatrix, tMatrix, tArray):
     # create output matrices (twice as big)
     size = rMatrix.shape[0]
     r = np.zeros(shape=(size*2, size*2))
-    t = np.zeros(size*2)
+    t = ma.zeros(size*2)
+
 
     for i,row in enumerate(rMatrix):
         r[2*i,2*i+1]  = 1 # the queue representing the interarrival time always routs into the lock q
@@ -516,13 +527,15 @@ def multi_analyze (tryDic, acqDic, relDic, namesVec, classL):
     routCntL = []
     servTimeVecL = []
     avgIAML = []
+    waitTimeVecL = []
     nLocks = 57
     for cl in classL:
         trySeqL = op.itemgetter(*cl)(tryDic.values())
         acqSeqL = op.itemgetter(*cl)(acqDic.values())
         relSeqL = op.itemgetter(*cl)(relDic.values())
         routCntL.append(routingCntMtx(trySeqL, nLocks))
-        servTimeVecL.append(servTime(acqDic, relDic, dim=nLocks))
+        servTimeVecL.append(servTime(acqSeqL, relSeqL, dim=nLocks))
+        waitTimeVecL.append(servTime(trySeqL, relSeqL, dim=nLocks))
         r = np.maximum(routCntL[-1], np.ones_like (routCntL[-1]))
         sumInterArrivalM = interArrivalMtx (trySeqL, relSeqL, nLocks)
         avgIAML.append(np.divide (sumInterArrivalM, r))
@@ -530,20 +543,17 @@ def multi_analyze (tryDic, acqDic, relDic, namesVec, classL):
     routL = map (normalizeRowWise, routCntL)
     IQs = map (insertIntermediateQs, routL, avgIAML, servTimeVecL)
     newRoutL, newServTimeVecL = zip (*IQs)
-
-    # remember which queues are unused and filter them
     
-
     # a class/serv.time.vector matrix
     servTimeM = np.zeros((len(classL), len(newServTimeVecL[0])))
     for i, x in enumerate (newServTimeVecL):
         servTimeM[i] = x
-    qt = list(islice(cycle((0,1)), nLocks*2))
+    qt = list(islice(cycle((1,0)), nLocks*2))
 
-    servTimeM2 = 1.0/servTimeM.T
-    servTimeM2[servTimeM.T == 0.0] = 0.0
+    ma_servTimeM = ma.array(servTimeM, mask = servTimeM == 0.0)
+    servTimeM2 = 1.0/ma_servTimeM
 
-    return newRoutL, servTimeM2, tuple(map(len, classL)), qt
+    return newRoutL, servTimeM2.T, tuple(map(len, classL)), qt, waitTimeVecL
 
 #--------------------------------------------------------------------------
 # entry point of application
@@ -557,7 +567,7 @@ def analyze (tryDic, acqDic, relDic, namesVec, numT, smoothing, overheadF = lamb
     if sumInterArrivalTotalM.shape[0] != cntTotalM.shape[0]:
         print "WARNING: count matrix not same size as interarrival time matrix."
 
-    servTimeVec = servTime (acqDic, relDic, 100 - smoothing)
+    servTimeVec = servTime (acqDic.values(), relDic.values(), 100 - smoothing)
     servTimeVecWithOH = overheadF(servTimeVec)
 
     # calculate avg transition time
@@ -583,7 +593,7 @@ def analyze (tryDic, acqDic, relDic, namesVec, numT, smoothing, overheadF = lamb
     estincr  = estimate[1::2]/servTimeVec
 
     # actual waiting time for numT threads
-    actualWait = servTime(tryDic, relDic, 100 - smoothing)
+    actualWait = servTime(tryDic.values(), relDic.values(), 100 - smoothing)
 
     for i,e in enumerate (estimate[1::2]):
         print '%s : act: %6.0f, est: %6.0f, serv: %6.0f, est.incr: %1.3f, acc: %d' % (namesVec[i], actualWait[i], estimate[1::2][i], servTimeVec[i], estincr[i], cntTot[i])
