@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 import os,sys,operator,math
 import numpy as np
-import numpy.ma as ma
 from itertools import *
 from numpy.linalg import solve
 from collections import defaultdict
@@ -10,6 +9,10 @@ np.set_printoptions(threshold=np.nan)
 
 def getPopulationVs (nClassL):
     return list(product(*[range(i+1) for i in nClassL]))
+
+
+def unitVs (dim):
+    return map (tuple, np.identity(dim, dtype=int))
 
 def dependentV(tup, c):
     unit = unitVs(len(tup))[c]
@@ -31,8 +34,8 @@ def mva_multiclass(routL, servrates, nClassL, queueType, vr=None):
     else:
         e = np.array(getVisitRatios(routL))
 
-    #if np.any(e[e <= 0.0]):
-    #    print "WARNING: negative visit ratios"
+    if np.any(e[e < 0.0]):
+        print "WARNING: negative visit ratios"
     
     
     #STEP 1: initialize the number of jobs matrices,
@@ -99,7 +102,7 @@ def getVisitRatio(p):
     r = np.vstack((tmp[:-1,:],q))
 
     a = np.zeros(K) # Zero vector with the last element being 1.0
-    a[-1] = 1.0
+    a[K-1] = 1.0
     v = solve(r,a)
     return v
 
@@ -196,7 +199,5 @@ def closedmclasstest2():
 
 
 
+
     
-
-
-
