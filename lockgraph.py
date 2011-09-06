@@ -1,5 +1,5 @@
 """SLAP-
-$ Time-stamp: <2011-09-01 11:46:31 jonatanlinden>
+$ Time-stamp: <2011-09-06 14:42:50 jonatanlinden>
 
 README:
 A collection of tools to do a queueing network analysis on sequences
@@ -14,19 +14,13 @@ import os,re,csv,subprocess,math
 import numpy as np
 import numpy.ma as ma
 import operator as op
-from mva import mva
-from mva_multiclass_simple import mva_multiclass
+from mva import mva, mva_multiclass
 import histo
 from itertools import *
 
 # CONSTANTS
 
 ADDR2LINEPATH = "addr2line-x86_64-elf"
-
-
-# we capsulate the data of one specific measurement in an object
-
-
 
 
 # --------------------------------------------------------------------------
@@ -39,13 +33,6 @@ def findGr8estKey (dic):
     for subDict in dic.values():
         keys.extend(subDict.keys())
     return max (keys)
-
-def shift (array, offset):
-    '''shifts array array offset steps to the right, introducing zeros from the left
-    '''
-    ret = np.zeros_like(array)
-    ret[offset:] = array[0:-offset]
-    return ret
 
 def mergeDict(d1, d2, op=lambda x,y:x+y):
     res = defaultdict(int,d1)
@@ -120,8 +107,10 @@ def listOfArrToMtx (list):
         mtx[i,0:len(row)] = row
     return mtx
 
-def imax(l):
-    return l.index(max(l))
+def imax(l, _key=None):
+    '''Indexed max function
+    '''
+    return l.index(max(l, key=_key))
 
 def count(firstval=0, step=1):
     '''start, start+step, start+2*step, ...
@@ -137,43 +126,13 @@ def mergeLists(lls):
     return [item for sublist in lls for item in sublist]
 
 
+def partsOfList(l, idxsL):
+    return op.itemgetter(*idxsL)(l)
+
+
 # end UTILS
 # --------------------------------------------------------------------------
 
-# --------------------------------------------------------------------------
-# PRUNING matrices
-
-def pruneP (epsilon):
-    '''Used as a filter function, this would filter out all (row,column) pairs not
-    containing any value greater than epsilon
-    '''
-    return lambda(rc): np.where( rc > epsilon)[0].size > 0
-
-def pruneFilter (mtx, predicate):
-    '''POST: A boolean vector indicating which rows and cols to keep
-    '''
-    keeprow = map(predicate, mtx)
-    keepcol = map(predicate, mtx.T)
-    return map(max, keepcol, keeprow)
-
-def filterByLockName (lockNames, filterName):
-    '''lockNames should be a list of strings where lock with id 0 corresponds to
-    the string at pos 0 in the list
-    '''
-    regex = re.compile(filterName)
-    res = map(lambda x: bool(regex.search(x)), lockNames)
-    print res
-    return
-
-def prune (mtx, filter):
-    '''Prunes a matrix in all dimensions, based on the boolean vector filter
-    '''
-    for i in np.arange(mtx.ndim):
-        mtx = np.compress(filter, mtx, axis=i)
-    return mtx
-
-# end PRUNING
-# --------------------------------------------------------------------------
 
 # --------------------------------------------------------------------------
 # PARSING CVS
@@ -212,15 +171,6 @@ def lockDictFromRecords(recFile):
         tidDict[row[1]].append((row[2], row[0]))
     return tidDict
 
-def parseInstrList (instrFile):
-    '''Input file should be on the format "lID randomcrap [hexaddr]"
-    '''
-    regex = re.compile("\[(?P<hexaddr>\w+)\]")
-    res = []
-    recReader = csv.reader (instrFile, delimiter=' ', skipinitialspace=True)
-    for _row in recReader:
-        res.append(regex.search(_row[2]).group('hexaddr'))
-    return res
 
 #--------------------------------------------------------------------------
 # ENTRY POINT for parsing
@@ -258,10 +208,7 @@ def parseDicTuple (prefix):
 # end PARSING
 # --------------------------------------------------------------------------
 
-def lockD (acqLockDs, relLockDs):
-    waitingTimes = map (waitingTime, acqLockDs.values(), relLockDs.values())
-    lockD = collapseLevel (waitingTimes)
-    return lockD
+
 
 
 
@@ -278,6 +225,11 @@ def countMtxFromSeq(lockSeq, dim):
         lockD[last][lID[0]] += 1
         last = lID[0]
     return dictToMatrix(lockD, dim)
+
+
+
+
+
 
 # FIX NOW !
     # transition time is:
@@ -339,10 +291,6 @@ def totalTimeWasted (anyDic, waitTVec, servTVec):
     return sum (waitSum.itervalues())
 
 
-def cycles_to_seconds (gHz, nCycles):
-    return (1/gHz*0.000000001)*nCycles
-
-
 def avgWaitTime (tryLockSeq, relLockSeq, perc=100, dim=0):
     """Calculates average waiting time (service time + queue time) per lock
     INPUT: tryLockSeq, relLockSeq : a tuple list of the form (lockID, timestamp)
@@ -377,48 +325,157 @@ def servTime (acqSeqL, relSeqL, perc=100, dim=0):
 def sumTimeMtx (trySeq, relSeq, dim = 0):
     return dictToMatrix (timedTransitions (trySeq, relSeq), dim)
 
-
-def avgTimeMtx (trySeq, relSeq, countM):
-    '''Generates a matrix containing the avg interarrival times between locks
-    '''
-    sumTimeM = sumTimeMtx (trySeq, relSeq)
-
-    size = countM.shape[0]
-    if sumTimeM.shape[0] != size:
-        print "WARNING: count matrix not same size as interarrival time matrix."
-    # calculate avg transition
-    r = np.maximum(countM, np.ones((size,size)))
-    return np.divide(sumTimeM, r)
-
-
-def hexToLine (createVec_, appname):
-    '''converts each hex address in createVec to a filename and row number
-    '''
-    process = subprocess.Popen([ADDR2LINEPATH, '-e', appname], shell=False,
-                               stdout=subprocess.PIPE,
-                               stdin=subprocess.PIPE
-                               )
-    createVec = []
-    for addr in createVec_:
-        process.stdin.write(addr + '\n') # write address to addr2line, fetch line
-        createVec.append(process.stdout.readline().rpartition('/')[2].rstrip())
-
-    process.terminate()
-    return createVec
-
-
 def sliceSeqs (tryD, acqD, relD, start=0, end=0):
     newTryD = {}
     newAcqD = {}
     newRelD = {}
     if end != 0:
         for k,v in tryD.iteritems():
-            newTryD[k] = list(itertools.takewhile(lambda x: x[1] < end, v))
+            newTryD[k] = list(takewhile(lambda x: x[1] < end, v))
             newAcqD[k] = acqD[k][0:len(newTryD[k])]
             newRelD[k] = relD[k][0:len(newTryD[k])]
     if start != 0:
         raise NotImplementedError
     return (newTryD, newAcqD, newRelD)
+
+
+
+
+def insertIntermediateQs (rMatrix, tMatrix, tArray):
+    '''Inserts intermediate queues representing interarrival times into a
+    routingmatrix and a servicetime array.
+
+    supposing that rMatrix is a routing matrix and tMatrix is a matrix with
+    the interarrival times between the locks.
+    '''
+
+    if (rMatrix.shape[0] != len(tArray)):
+        print "WARNING: Routing matrix differ from size of service time vector" 
+    
+    # create output matrices (twice as big)
+    size = rMatrix.shape[0]
+    r = np.zeros(shape=(size*2, size*2))
+    t = ma.zeros(size*2)
+
+
+    for i,row in enumerate(rMatrix):
+        r[2*i,2*i+1]  = 1 # the queue representing the interarrival time always routs into the lock q
+        r[(2*i+1),::2] = row # displace each routing by 1
+
+    for i,col in enumerate(tMatrix.T):
+        # first col of tMatrix contains the interarrival times between each lock
+        # and lock 1
+        if np.sum(rMatrix.T[i]) == 0.0:
+            t[2*i] = 0.0
+        else:
+            t[2*i] = np.average(col, weights=rMatrix.T[i]) # aggregate it. (in some way)
+        t[2*i+1] = tArray[i]
+    return r, t
+
+
+
+
+def routingCntMtx (anyL, dim = 0):
+    '''A matrix with the number of transitions between locks for each thread
+    '''
+    return sumMatrices ([countMtxFromSeq(x, dim) for x in anyL])
+
+def interArrivalMtx (tryDic, relDic, dim=0):
+    return sumMatrices ([sumTimeMtx(x, y, dim) for (x,y) in zip(tryDic, relDic)])
+
+
+
+
+
+
+# --------------------------------------------------------------------------
+# entry points of application
+
+
+def multi_analyze (tryDic, acqDic, relDic, namesVec, classL):
+#generate routing, serv.time and interarrivals
+    routCntL = []
+    servTimeVecL = []
+    avgIAML = []
+    waitTimeVecL = []
+    nLocks = 1
+    for cl in classL:
+        print cl
+        trySeqL = [op.itemgetter(*cl)(tryDic.values())]
+        acqSeqL = [op.itemgetter(*cl)(acqDic.values())]
+        relSeqL = [op.itemgetter(*cl)(relDic.values())]
+        routCntL.append(routingCntMtx(trySeqL, nLocks))
+        servTimeVecL.append(servTime(acqSeqL, relSeqL, dim=nLocks))
+        waitTimeVecL.append(servTime(trySeqL, relSeqL, dim=nLocks))
+        r = np.maximum(routCntL[-1], np.ones_like (routCntL[-1]))
+        sumInterArrivalM = interArrivalMtx (trySeqL, relSeqL, nLocks)
+        avgIAML.append(np.divide (sumInterArrivalM, r))
+
+    routL = map (normalizeRowWise, routCntL)
+    IQs = map (insertIntermediateQs, routL, avgIAML, servTimeVecL)
+    newRoutL, newServTimeVecL = zip (*IQs)
+    
+    # a class/serv.time.vector matrix
+    servTimeM = np.zeros((len(classL), len(newServTimeVecL[0])))
+    for i, x in enumerate (newServTimeVecL):
+        servTimeM[i] = x
+    qt = list(islice(cycle((1,0)), nLocks*2))
+
+    ma_servTimeM = ma.array(servTimeM, mask = servTimeM == 0.0)
+    servTimeM2 = 1.0/ma_servTimeM
+
+    cntPerClass = map (np.sum, routCntL)
+
+    return newRoutL, servTimeM2.T, tuple(map(len, classL)), qt, zip(*map(ma.getdata, waitTimeVecL)), avgIAML, cntPerClass
+
+
+def analyze (tryDic, acqDic, relDic, namesVec, numT, smoothing, overheadF = lambda x: x):
+
+    cntTotalM = routingCntMtx(tryDic.values())
+    sumInterArrivalTotalM = interArrivalMtx (tryDic.values(), relDic.values())
+
+    # sanity check
+    if sumInterArrivalTotalM.shape[0] != cntTotalM.shape[0]:
+        print "WARNING: count matrix not same size as interarrival time matrix."
+
+    servTimeVec = servTime (acqDic.values(), relDic.values(), 100 - smoothing)
+    servTimeVecWithOH = overheadF(servTimeVec)
+
+    # calculate avg transition time
+    r = np.maximum(cntTotalM, np.ones_like (cntTotalM))
+    avgInterArrivalTotalM = np.divide (sumInterArrivalTotalM, r)
+    rout = normalizeRowWise (cntTotalM)
+    newRout, servTimes = insertIntermediateQs (rout, avgInterArrivalTotalM, servTimeVecWithOH)
+
+    return newRout, 1/servTimes, cntTotalM
+
+def runandprintmva (rout, servRates, numT, tryDic, relDic, namesVec, cntTotalM):
+    # mva it
+    estimate = mva (rout, servRates, numT)
+    servTimes = 1/servRates[1::2]
+    estincr  = (estimate*servRates)[1::2]
+
+    cntTot = np.sum (cntTotalM, axis=0)
+
+    # actual waiting time for numT threads
+    actualWait = servTime(tryDic.values(), relDic.values())
+
+    for i,e in enumerate (estimate[1::2]):
+        print '%s : act: %6.0f, est: %6.0f, serv: %6.0f, est.incr: %1.3f, acc: %d' % (namesVec[i], actualWait[i], estimate[1::2][i], servTimes[i], estincr[i], cntTot[i])
+
+    return zip (namesVec, actualWait, estimate[1::2], servTimes)
+
+
+
+
+
+
+
+
+
+# ********************************************************************************
+# Currently not in use
+
 
 
 def lockToServTimeMap (instrVec, servTime, countVec):
@@ -461,47 +518,7 @@ def lockMap (createVec1_, createVec2_, servTimeVec2, countVec2):
 
     # lockD instr -> lockID list
     mapp = revertListDict (lockD)
-
-    # TODO: if one lock (row of code) does not appear in lockD1, what to do?
-    # FIX: correct missing indices manually
-    #retD = {}
-    #for k in mapp.keys():
-    #    retD[k] = servD1[mapp[k]]
-    #servTimeMapp = dictToArray (retD)
     return servD1, mapp
-
-
-def insertIntermediateQs (rMatrix, tMatrix, tArray):
-    '''Inserts intermediate queues representing interarrival times into a
-    routingmatrix and a servicetime array.
-
-    supposing that rMatrix is a routing matrix and tMatrix is a matrix with
-    the interarrival times between the locks.
-    '''
-
-    if (rMatrix.shape[0] != len(tArray)):
-        print "WARNING: Routing matrix differ from size of service time vector" 
-    
-    # create output matrices (twice as big)
-    size = rMatrix.shape[0]
-    r = np.zeros(shape=(size*2, size*2))
-    t = ma.zeros(size*2)
-
-
-    for i,row in enumerate(rMatrix):
-        r[2*i,2*i+1]  = 1 # the queue representing the interarrival time always routs into the lock q
-        r[(2*i+1),::2] = row # displace each routing by 1
-
-    for i,col in enumerate(tMatrix.T):
-        # first col of tMatrix contains the interarrival times between each lock
-        # and lock 1
-        if np.sum(rMatrix.T[i]) == 0.0:
-            t[2*i] = 0.0
-        else:
-            t[2*i] = np.average(col, weights=rMatrix.T[i]) # aggregate it. (in some way)
-        t[2*i+1] = tArray[i]
-    return r, t
-
 
 def pruneAll (rMtx, tMtx, tVec, epsilon):
     '''will prune the input matrices keeping the columns and rows for which
@@ -512,89 +529,66 @@ def pruneAll (rMtx, tMtx, tVec, epsilon):
     ids = np.compress(f, np.arange(len (f)))
     return prune(rMtx, f), prune(tMtx, f), prune(tVec, f), ids
 
-
-def routingCntMtx (anyL, dim = 0):
-    '''A matrix with the number of transitions between locks for each thread
+def hexToLine (createVec_, appname):
+    '''converts each hex address in createVec to a filename and row number
     '''
-    return sumMatrices ([countMtxFromSeq(x, dim) for x in anyL])
+    process = subprocess.Popen([ADDR2LINEPATH, '-e', appname], shell=False,
+                               stdout=subprocess.PIPE,
+                               stdin=subprocess.PIPE
+                               )
+    createVec = []
+    for addr in createVec_:
+        process.stdin.write(addr + '\n') # write address to addr2line, fetch line
+        createVec.append(process.stdout.readline().rpartition('/')[2].rstrip())
 
-def interArrivalMtx (tryDic, relDic, dim=0):
-    return sumMatrices ([sumTimeMtx(x, y, dim) for (x,y) in zip(tryDic, relDic)])
+    process.terminate()
+
+    return createVec
 
 
-def multi_analyze (tryDic, acqDic, relDic, namesVec, classL):
-#generate routing, serv.time and interarrivals
-    routCntL = []
-    servTimeVecL = []
-    avgIAML = []
-    waitTimeVecL = []
-    nLocks = 57
-    for cl in classL:
-        trySeqL = op.itemgetter(*cl)(tryDic.values())
-        acqSeqL = op.itemgetter(*cl)(acqDic.values())
-        relSeqL = op.itemgetter(*cl)(relDic.values())
-        routCntL.append(routingCntMtx(trySeqL, nLocks))
-        servTimeVecL.append(servTime(acqSeqL, relSeqL, dim=nLocks))
-        waitTimeVecL.append(servTime(trySeqL, relSeqL, dim=nLocks))
-        r = np.maximum(routCntL[-1], np.ones_like (routCntL[-1]))
-        sumInterArrivalM = interArrivalMtx (trySeqL, relSeqL, nLocks)
-        avgIAML.append(np.divide (sumInterArrivalM, r))
+def parseInstrList (instrFile):
+    '''Input file should be on the format "lID randomcrap [hexaddr]"
+    '''
+    regex = re.compile("\[(?P<hexaddr>\w+)\]")
+    res = []
+    recReader = csv.reader (instrFile, delimiter=' ', skipinitialspace=True)
+    for _row in recReader:
+        res.append(regex.search(_row[2]).group('hexaddr'))
+    return res
 
-    routL = map (normalizeRowWise, routCntL)
-    IQs = map (insertIntermediateQs, routL, avgIAML, servTimeVecL)
-    newRoutL, newServTimeVecL = zip (*IQs)
-    
-    # a class/serv.time.vector matrix
-    servTimeM = np.zeros((len(classL), len(newServTimeVecL[0])))
-    for i, x in enumerate (newServTimeVecL):
-        servTimeM[i] = x
-    qt = list(islice(cycle((1,0)), nLocks*2))
 
-    ma_servTimeM = ma.array(servTimeM, mask = servTimeM == 0.0)
-    servTimeM2 = 1.0/ma_servTimeM
 
-    return newRoutL, servTimeM2.T, tuple(map(len, classL)), qt, waitTimeVecL
+# --------------------------------------------------------------------------
+# PRUNING matrices
 
-#--------------------------------------------------------------------------
-# entry point of application
+def pruneP (epsilon):
+    '''Used as a filter function, this would filter out all (row,column) pairs not
+    containing any value greater than epsilon
+    '''
+    return lambda(rc): np.where( rc > epsilon)[0].size > 0
 
-def analyze (tryDic, acqDic, relDic, namesVec, numT, smoothing, overheadF = lambda x: x):
+def pruneFilter (mtx, predicate):
+    '''POST: A boolean vector indicating which rows and cols to keep
+    '''
+    keeprow = map(predicate, mtx)
+    keepcol = map(predicate, mtx.T)
+    return map(max, keepcol, keeprow)
 
-    cntTotalM = routingCntMtx(tryDic.values())
-    sumInterArrivalTotalM = interArrivalMtx (tryDic.values(), relDic.values())
+def filterByLockName (lockNames, filterName):
+    '''lockNames should be a list of strings where lock with id 0 corresponds to
+    the string at pos 0 in the list
+    '''
+    regex = re.compile(filterName)
+    res = map(lambda x: bool(regex.search(x)), lockNames)
+    print res
+    return
 
-    # sanity check
-    if sumInterArrivalTotalM.shape[0] != cntTotalM.shape[0]:
-        print "WARNING: count matrix not same size as interarrival time matrix."
+def prune (mtx, filter):
+    '''Prunes a matrix in all dimensions, based on the boolean vector filter
+    '''
+    for i in np.arange(mtx.ndim):
+        mtx = np.compress(filter, mtx, axis=i)
+    return mtx
 
-    servTimeVec = servTime (acqDic.values(), relDic.values(), 100 - smoothing)
-    servTimeVecWithOH = overheadF(servTimeVec)
-
-    # calculate avg transition time
-    r = np.maximum(cntTotalM, np.ones_like (cntTotalM))
-    avgInterArrivalTotalM = np.divide (sumInterArrivalTotalM, r)
-
-    # prune locks not used very much
-    #cntP, avgInterArrivalP, tVecP, idMap = pruneAll (cntTotalM, avgInterArrivalTotalM, servTimeVec, 100)
-    # normalize (row-wise) the pruned transition count matrix to get the routing matrix
-    #routP = normalizeRowWise (cntP)
-    # insert intermediate infinite server qs to represent the interarrival times
-    # service time is calculated as the weighted average of the incoming traffic
-    #newRout, servTimes = insertIntermediateQs (routP, avgInterArrivalP, tVecP)
-
-    rout = normalizeRowWise (cntTotalM)
-    newRout, servTimes = insertIntermediateQs (rout, avgInterArrivalTotalM, servTimeVecWithOH)
-
-    cntTot = np.sum (cntTotalM, axis=0)
-
-    # mva it
-    estimate = mva (newRout, 1/servTimes, numT)
-    estincr  = estimate[1::2]/servTimeVec
-
-    # actual waiting time for numT threads
-    actualWait = servTime(tryDic.values(), relDic.values(), 100 - smoothing)
-
-    for i,e in enumerate (estimate[1::2]):
-        print '%s : act: %6.0f, est: %6.0f, serv: %6.0f, est.incr: %1.3f, acc: %d' % (namesVec[i], actualWait[i], estimate[1::2][i], servTimeVec[i], estincr[i], cntTot[i])
-
-    return zip (namesVec, actualWait, estimate[1::2], servTimeVec)
+# end PRUNING
+# --------------------------------------------------------------------------

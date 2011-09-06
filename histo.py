@@ -1,6 +1,7 @@
 import numpy as np
 import os, csv
-
+from itertools import *
+import operator as op
 
 def normalizeList(l, sumTo=1):
     return [ x/(sum(l)*1.0)*sumTo for x in l]
@@ -63,11 +64,14 @@ def maxLockdist (timeline):
 def timeLineSeq (startSeq, endSeq):
     return map (lambda (i,x): (x[1], endSeq[i][1] - x[1], x[0]), enumerate (startSeq))
 
+def timeLineSeq2 (startSeq, middleSeq, endSeq, tag):
+    return map (lambda (i,x): (x[1], endSeq[i][1] - x[1], endSeq[i][1] - middleSeq[i][1], x[0], tag), enumerate (startSeq))
+
 
 def partitionCount (tl, partitionStrategy=lambda x: x[1]):
     tl2 = sorted(tl, key=partitionStrategy)
     counts = []
-    subgroup = itertools.groupby(tl2, key=partitionStrategy)
+    subgroup = groupby(tl2, key=partitionStrategy)
     for k, g in subgroup:
         counts.append((k, len(list(g))))
     return counts
@@ -85,10 +89,10 @@ def setLength (l, _start, _end, bucketsize, val):
     pref = []
     suff = []
     if (_start < begin):
-        pref = list(itertools.takewhile(lambda x: x[0] < begin, itertools.izip (count (startBucket(_start, bucketsize), bucketsize), itertools.repeat(val))))
+        pref = list(takewhile(lambda x: x[0] < begin, izip (count (startBucket(_start, bucketsize), bucketsize), repeat(val))))
     lend = l[-1][0] 
     if (lend < _end):
-        suff = list(itertools.takewhile(lambda x: x[0] < _end, itertools.izip (count (endBucket(lend + bucketsize, bucketsize), bucketsize), itertools.repeat(val))))
+        suff = list(takewhile(lambda x: x[0] < _end, izip (count (endBucket(lend + bucketsize, bucketsize), bucketsize), repeat(val))))
     pref.append('')
     pref[-1:] = l
     pref.append('')
@@ -108,11 +112,11 @@ def avgTimeLineSeq (timeLines, timestep, end=0, aggr=lambda tl: sum(zip(*tl)[1])
     print start
     print timeLine[0][0]
     if end != 0:
-        timeLine = itertools.takewhile(lambda x: x[0] < end, timeLine)
+        timeLine = takewhile(lambda x: x[0] < end, timeLine)
     ret = []
     for i in count(start, timestep):
-        onestep = list(itertools.takewhile(lambda x: x[0] < i, timeLine))
-        timeLine = itertools.dropwhile(lambda x: x[0] < i, timeLine)
+        onestep = list(takewhile(lambda x: x[0] < i, timeLine))
+        timeLine = dropwhile(lambda x: x[0] < i, timeLine)
         ret.append((i, aggr(onestep)))
         # the pythonian way of peeking at an iterator, i.e. hasnext()
         try:
@@ -120,7 +124,33 @@ def avgTimeLineSeq (timeLines, timestep, end=0, aggr=lambda tl: sum(zip(*tl)[1])
         except StopIteration:
             break
         else:
-            timeLine = itertools.chain([first], timeLine)
+            timeLine = chain([first], timeLine)
     return ret
 
 	
+
+
+
+
+
+def waittimecorr(timelinesL, n):
+    # use first timeline as pivot
+
+    timelinesSorted = [sorted(l, key=lambda x: x[1], reverse=True) for l in timelinesL]
+
+    
+    onetime = sorted(chain(*[islice(l, n) for l in timelinesSorted]))
+    return onetime
+
+
+def sliceoftimeline(timelines, start, dur):
+    end = start + dur
+    timelines_slice = mergeLists([list(dropwhile(lambda x: x[0] < start, takewhile(lambda x: x[0] < end, l))) for l in timelines])
+    return partitionCount(timelines_slice, partitionStrategy=lambda x: x[4])
+
+
+def mergeLists(lls):
+    '''Flattens a list of lists.
+    '''
+    return [item for sublist in lls for item in sublist]
+    
