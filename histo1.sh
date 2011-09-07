@@ -8,11 +8,13 @@ set ylabel 'num of timings'
 set xlabel 'waiting time'
 set style fill solid #1.00 border -1
 set style data histogram
+set grid
+set xrange[ 0: ]
 #set xtics 5 scale 0.1 nomirror
 #set ytics 500 scale 0.1
 #set format y ""
 #set format x ""
 
-set yrange[0:2000]
+set yrange[0:]
 plot "$1.dat" using 1 
 EOF
