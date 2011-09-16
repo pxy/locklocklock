@@ -12,6 +12,14 @@ typedef struct
 
 typedef struct
 {
+	int thread_id;
+	struct random_data* rand_states;
+	int arrival_lambda;
+	pthread_mutex_t *pMutex;
+} mthread_params;
+
+typedef struct
+{
 	uint64_t ts;
 	int id;
 } timestamp;

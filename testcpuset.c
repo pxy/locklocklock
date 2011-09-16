@@ -6,6 +6,8 @@
 #include <assert.h>
 #include <pthread.h>
 #include <errno.h>
+#include <sys/syscall.h>
+#include <unistd.h>
 
 
 // #define DEBUG
@@ -39,6 +41,19 @@ main(int argc, char *argv[])
 	
 	num_cpus = atoi(argv[1]);
 	
+	
+	unsigned long new_mask = 2;
+	unsigned int len = sizeof(new_mask);
+	unsigned long cur_mask;
+	pid_t p = 0;
+	int ret;
+
+	ret = sched_getaffinity(p, len, NULL);
+	printf(" sched_getaffinity = %d, len = %u\n", ret, len);
+
+	ret = sched_getaffinity(p, len, &cur_mask);
+	printf(" sched_getaffinity = %d, cur_mask = %08lx\n", ret, cur_mask);
+
 	cpusetp = CPU_ALLOC(num_cpus);
 	if (cpusetp == NULL) {
 		perror("CPU_ALLOC");
