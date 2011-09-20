@@ -19,7 +19,6 @@
 
 
 // kalkyl freq
-#define FREQ 2270000000
 #define MHZ 2270
 #define NTHREADS 4
 
@@ -51,9 +50,6 @@ static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
 int runtime;
 
-
-
-//static lock_impl_t lock_impl;
 
 int main(int argc, char *argv[]){
 
@@ -122,15 +118,13 @@ int main(int argc, char *argv[]){
 
     /***** SETUP *****/
     // stop experiment when time end (in cycles) is reached
-    
-    end = runtime * MHZ * 1000000 + read_tsc_p();
-
+    end = runtime * MHZ * 1000000L + read_tsc_p();
     // two different classes
-    classes[0].think_t = MHZ*6;
-    classes[0].service_t = MHZ*120;
+    classes[0].think_t = MHZ*48;
+    classes[0].service_t = MHZ*960;
 
-    classes[1].think_t = MHZ*800;
-    classes[1].service_t = MHZ*180;
+    classes[1].think_t = MHZ*6400;
+    classes[1].service_t = MHZ*1440;
 
     /* SPAWN */
     for (int i = 0; i < NTHREADS; i++) {
@@ -140,7 +134,7 @@ int main(int argc, char *argv[]){
         if (pthread_create(&t->thread, NULL, &run, t))
             return (EXIT_FAILURE);
     }
-
+    
     
 
     /* JOIN */
