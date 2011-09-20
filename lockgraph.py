@@ -1,5 +1,5 @@
 """SLAP-
-$ Time-stamp: <2011-09-06 14:42:50 jonatanlinden>
+$ Time-stamp: <2011-09-12 10:27:37 jonatanlinden>
 
 README:
 A collection of tools to do a queueing network analysis on sequences
@@ -335,7 +335,10 @@ def sliceSeqs (tryD, acqD, relD, start=0, end=0):
             newAcqD[k] = acqD[k][0:len(newTryD[k])]
             newRelD[k] = relD[k][0:len(newTryD[k])]
     if start != 0:
-        raise NotImplementedError
+        for k,v in tryD.iteritems():
+            newTryD[k] = list(dropwhile(lambda x: x[1] < start, v))
+            newAcqD[k] = acqD[k][len(tryD[k]) - len(newTryD[k]):]
+            newRelD[k] = relD[k][len(tryD[k]) - len(newTryD[k]):]
     return (newTryD, newAcqD, newRelD)
 
 
@@ -392,18 +395,17 @@ def interArrivalMtx (tryDic, relDic, dim=0):
 # entry points of application
 
 
-def multi_analyze (tryDic, acqDic, relDic, namesVec, classL):
+def multi_analyze (tryDic, acqDic, relDic, namesVec, classL, overhead=0.0):
 #generate routing, serv.time and interarrivals
     routCntL = []
     servTimeVecL = []
     avgIAML = []
     waitTimeVecL = []
-    nLocks = 1
+    nLocks = (max ([max (x, key=op.itemgetter(0)) for x in tryDic.values()], key=op.itemgetter(0)))[0] + 1
     for cl in classL:
-        print cl
-        trySeqL = [op.itemgetter(*cl)(tryDic.values())]
-        acqSeqL = [op.itemgetter(*cl)(acqDic.values())]
-        relSeqL = [op.itemgetter(*cl)(relDic.values())]
+        trySeqL = op.itemgetter(*cl)(tryDic.values())
+        acqSeqL = op.itemgetter(*cl)(acqDic.values())
+        relSeqL = op.itemgetter(*cl)(relDic.values())
         routCntL.append(routingCntMtx(trySeqL, nLocks))
         servTimeVecL.append(servTime(acqSeqL, relSeqL, dim=nLocks))
         waitTimeVecL.append(servTime(trySeqL, relSeqL, dim=nLocks))
@@ -422,11 +424,15 @@ def multi_analyze (tryDic, acqDic, relDic, namesVec, classL):
     qt = list(islice(cycle((1,0)), nLocks*2))
 
     ma_servTimeM = ma.array(servTimeM, mask = servTimeM == 0.0)
+    ma_servTimeM[1::2] = ma_servTimeM[1::2] + overhead
     servTimeM2 = 1.0/ma_servTimeM
 
+    
     cntPerClass = map (np.sum, routCntL)
 
-    return newRoutL, servTimeM2.T, tuple(map(len, classL)), qt, zip(*map(ma.getdata, waitTimeVecL)), avgIAML, cntPerClass
+    cntClassLock = zip(*[np.sum(x, axis=0) for x in routCntL])
+
+    return newRoutL, servTimeM2.T, tuple(map(len, classL)), qt, zip(*map(ma.getdata, waitTimeVecL)), avgIAML, routCntL
 
 
 def analyze (tryDic, acqDic, relDic, namesVec, numT, smoothing, overheadF = lambda x: x):
@@ -451,9 +457,9 @@ def analyze (tryDic, acqDic, relDic, namesVec, numT, smoothing, overheadF = lamb
 
 def runandprintmva (rout, servRates, numT, tryDic, relDic, namesVec, cntTotalM):
     # mva it
-    estimate = mva (rout, servRates, numT)
+    T,N = mva (rout, servRates, numT)
     servTimes = 1/servRates[1::2]
-    estincr  = (estimate*servRates)[1::2]
+    estincr  = (T*servRates)[1::2]
 
     cntTot = np.sum (cntTotalM, axis=0)
 
@@ -461,9 +467,9 @@ def runandprintmva (rout, servRates, numT, tryDic, relDic, namesVec, cntTotalM):
     actualWait = servTime(tryDic.values(), relDic.values())
 
     for i,e in enumerate (estimate[1::2]):
-        print '%s : act: %6.0f, est: %6.0f, serv: %6.0f, est.incr: %1.3f, acc: %d' % (namesVec[i], actualWait[i], estimate[1::2][i], servTimes[i], estincr[i], cntTot[i])
+        print '%s : act: %6.0f, est: %6.0f, serv: %6.0f, est.incr: %1.3f, acc: %d' % (namesVec[i], actualWait[i], T[1::2][i], servTimes[i], estincr[i], cntTot[i])
 
-    return zip (namesVec, actualWait, estimate[1::2], servTimes)
+    return zip (namesVec, actualWait, T[1::2], servTimes, N[1::2])
 
 
 
