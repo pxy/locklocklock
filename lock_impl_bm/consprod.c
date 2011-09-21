@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include <stdlib.h>
 #include <stdio.h>
 #include <pthread.h>
@@ -15,13 +16,16 @@
 #error "This stuff only works on Linux!"
 #endif
 
+#define handle_error_en(en, msg) \
+               do { errno = en; perror(msg); exit(EXIT_FAILURE); } while (0)
 
 
 
 // kalkyl freq
-#define FREQ 2270000000
 #define MHZ 2270
 #define NTHREADS 4
+//#define USE_THREADPINNING
+
 
 
 
@@ -49,11 +53,14 @@ time_info_t current_ts[NTHREADS];
 thread_args_t threads[NTHREADS];
 static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
+#ifdef USE_THREADPINNING
+int s;	  
+cpu_set_t cpuset[NTHREADS];
+int thread_cpu_map[NTHREADS] = {0,2,4,6};
+#endif
+
 int runtime;
 
-
-
-//static lock_impl_t lock_impl;
 
 int main(int argc, char *argv[]){
 
@@ -122,15 +129,15 @@ int main(int argc, char *argv[]){
 
     /***** SETUP *****/
     // stop experiment when time end (in cycles) is reached
-    
-    end = runtime * MHZ * 1000000 + read_tsc_p();
-
+    end = runtime * MHZ * 1000000L + read_tsc_p();
     // two different classes
+    // unfair values class1: 6, 120, class2: 800, 180;
     classes[0].think_t = MHZ*6;
     classes[0].service_t = MHZ*120;
 
     classes[1].think_t = MHZ*800;
     classes[1].service_t = MHZ*180;
+
 
     /* SPAWN */
     for (int i = 0; i < NTHREADS; i++) {
@@ -139,9 +146,16 @@ int main(int argc, char *argv[]){
         t->class_info = classes[i % 2];
         if (pthread_create(&t->thread, NULL, &run, t))
             return (EXIT_FAILURE);
-    }
 
-    
+#ifdef USE_THREADPINNING	  
+        CPU_ZERO(&cpuset[i]);
+        CPU_SET(thread_cpu_map[i], &cpuset[i]);
+        s += pthread_setaffinity_np(t->thread, sizeof(cpu_set_t), &cpuset[i]);
+        if (s != 0)
+            handle_error_en(s, "set affinity error\n")`;
+#endif
+
+    }
 
     /* JOIN */
     for (int i = 0; i < NTHREADS; i++)
@@ -167,6 +181,7 @@ void* run(void *_args){
     thread_args_t * args = (thread_args_t*)_args;
     uint64_t start;
     int pause;
+    int cnt = 0;
     do {
         // think locally
         start = read_tsc_p();
@@ -181,9 +196,11 @@ void* run(void *_args){
         while(read_tsc_p() - start < pause)
             ;
         unlock (args->tid);
+        cnt++;
 
     } while (read_tsc_p() < end);
-
+    
+    printf("tid: %d, cnt: %d\n", args->tid, cnt);
     return NULL;
 }
 
@@ -203,7 +220,6 @@ unlock(int tid)
     current_ts[tid].rel = read_tsc_p();
     g_array_append_val (t_times[tid], current_ts[tid]);
 }
-
 
 static int
 get_next_e(int mu) {
@@ -252,6 +268,7 @@ set_lock_impl (int i)
     }
     return 0;
 }
+
 
 
 /* print collected data to files */

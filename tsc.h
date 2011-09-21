@@ -27,7 +27,7 @@ read_tsc_p()
 	 "or %%rdx, %%rax"
 	 : "=a"(tsc)
 	 :
-	 : "rcx", "rdx");
+	 : "%rcx", "%rdx");
    return tsc;
 }
 
