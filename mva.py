@@ -117,7 +117,7 @@ def mva_multiclass(routL, servrates, nClassL, queueType, vr=None, sf=None):
 
 
 # APPROX ITERATIVE MULTICLASS MVA WITH DETERMINISTIC SERVICE TIMES
-
+# not working
 def mva_dsa_multiclass(routL, servrates, nClassL, queueType, vr=None):
 
 
@@ -157,6 +157,10 @@ def mva_dsa_multiclass(routL, servrates, nClassL, queueType, vr=None):
     print "iterations: ", cnt
     return  T, N, Unew
 
+
+def mariesmethod ():
+    
+    return None
 
 # ************************* HELPER FUNCTIONS ************************************
 

@@ -2,6 +2,16 @@ import numpy as np
 import os, csv, string
 from itertools import *
 import operator as op
+import math
+
+def count(firstval=0, step=1):
+    '''start, start+step, start+2*step, ...
+    '''
+    x = firstval
+    while 1:
+        yield x
+        x += step
+
 
 def normalizeList(l, sumTo=1):
     return [ x/(sum(l)*1.0)*sumTo for x in l]

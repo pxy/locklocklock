@@ -1,5 +1,5 @@
 """SLAP-
-$ Time-stamp: <2011-09-12 10:27:37 jonatanlinden>
+$ Time-stamp: <2011-09-21 11:20:22 jonatanlinden>
 
 README:
 A collection of tools to do a queueing network analysis on sequences
@@ -128,6 +128,14 @@ def mergeLists(lls):
 
 def partsOfList(l, idxsL):
     return op.itemgetter(*idxsL)(l)
+
+
+
+def idx(idxl, l):
+    if len (idxl) == 1:
+        return [l[idxl[0]]]
+    return op.itemgetter(*idxl)(l)
+
 
 
 # end UTILS
@@ -403,9 +411,9 @@ def multi_analyze (tryDic, acqDic, relDic, namesVec, classL, overhead=0.0):
     waitTimeVecL = []
     nLocks = (max ([max (x, key=op.itemgetter(0)) for x in tryDic.values()], key=op.itemgetter(0)))[0] + 1
     for cl in classL:
-        trySeqL = op.itemgetter(*cl)(tryDic.values())
-        acqSeqL = op.itemgetter(*cl)(acqDic.values())
-        relSeqL = op.itemgetter(*cl)(relDic.values())
+        trySeqL = idx(cl, tryDic.values())
+        acqSeqL = idx(cl, acqDic.values())
+        relSeqL = idx(cl, relDic.values())
         routCntL.append(routingCntMtx(trySeqL, nLocks))
         servTimeVecL.append(servTime(acqSeqL, relSeqL, dim=nLocks))
         waitTimeVecL.append(servTime(trySeqL, relSeqL, dim=nLocks))
