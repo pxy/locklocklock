@@ -1,5 +1,5 @@
 """SLAP-
-$ Time-stamp: <2011-09-21 11:20:22 jonatanlinden>
+$ Time-stamp: <2011-10-10 15:53:07 jonatanlinden>
 
 README:
 A collection of tools to do a queueing network analysis on sequences
@@ -14,7 +14,7 @@ import os,re,csv,subprocess,math
 import numpy as np
 import numpy.ma as ma
 import operator as op
-from mva import mva, mva_multiclass
+from mva import st_mva, mva_multiclass
 import histo
 from itertools import *
 
@@ -129,13 +129,18 @@ def mergeLists(lls):
 def partsOfList(l, idxsL):
     return op.itemgetter(*idxsL)(l)
 
-
+def mysum(l):
+    s2 = 0
+    s = 0
+    for e in l:
+        s += e
+        s2 += e * e
+    return (s, s2)
 
 def idx(idxl, l):
     if len (idxl) == 1:
         return [l[idxl[0]]]
     return op.itemgetter(*idxl)(l)
-
 
 
 # end UTILS
@@ -299,7 +304,7 @@ def totalTimeWasted (anyDic, waitTVec, servTVec):
     return sum (waitSum.itervalues())
 
 
-def avgWaitTime (tryLockSeq, relLockSeq, perc=100, dim=0):
+def avgWaitTime (tryLockSeq, relLockSeq, dim=0):
     """Calculates average waiting time (service time + queue time) per lock
     INPUT: tryLockSeq, relLockSeq : a tuple list of the form (lockID, timestamp)
     """
@@ -308,26 +313,32 @@ def avgWaitTime (tryLockSeq, relLockSeq, perc=100, dim=0):
     if dim==0:
         dim = max (timeD.keys()) + 1
     arr = np.zeros(dim)
+    arr2 = np.zeros(dim)
     # the number of accesses to each lock will be defined by the length of
     # each dictionary value
     countArr = np.zeros(dim)
     for k,v in timeD.iteritems():
         countArr[k] = len(v)
-        v.sort()
-        hi = perc*len(v)/100
-        arr[k] = float(sum(v[0:hi])) / (hi)
-    return (arr, countArr)
+        s1, s2 = mysum(v)
+        arr[k] = float(s1) / len(v)
+        arr2[k] = float(s2) /len(v)
+
+    return (arr, arr2, countArr)
+    
 
 
-def servTime (acqSeqL, relSeqL, perc=100, dim=0):
-    servTimeList = map (lambda x,y: avgWaitTime(x,y, perc, dim), acqSeqL, relSeqL)
-    servTimes, counts = zip (*servTimeList)
+
+def servTime (acqSeqL, relSeqL, dim=0):
+    servTimeList = map (lambda x,y: avgWaitTime(x,y, dim), acqSeqL, relSeqL)
+    servTimes, servTimesSq, counts = zip (*servTimeList)
     servTimesMtx = listOfArrToMtx (servTimes)
+    servTimesSqMtx = listOfArrToMtx (servTimesSq)
     countMtx = listOfArrToMtx (counts)
     # norm of columns
     norms = normalizeRowWise(countMtx.T).T
     ma_servTimesMtx = ma.array(servTimesMtx, mask = servTimesMtx == 0)
-    return ma.average (ma_servTimesMtx, axis=0, weights=norms)
+    ma_servTimesSqMtx = ma.array(servTimesSqMtx, mask = servTimesSqMtx == 0)
+    return ma.average (ma_servTimesMtx, axis=0, weights=norms), ma.average(ma_servTimesSqMtx, axis=0, weights=norms)
 
 
 def sumTimeMtx (trySeq, relSeq, dim = 0):
@@ -350,6 +361,13 @@ def sliceSeqs (tryD, acqD, relD, start=0, end=0):
     return (newTryD, newAcqD, newRelD)
 
 
+
+def doubleDimWithZeros (arr):
+    newdim = len (arr)*2
+    t = ma.zeros(newdim)
+    for i in range(0, newdim, 2):
+        t[2*i+1] = arr[i]
+    return t
 
 
 def insertIntermediateQs (rMatrix, tMatrix, tArray):
@@ -407,6 +425,7 @@ def multi_analyze (tryDic, acqDic, relDic, namesVec, classL, overhead=0.0):
 #generate routing, serv.time and interarrivals
     routCntL = []
     servTimeVecL = []
+    servTimeSqVecL = []
     avgIAML = []
     waitTimeVecL = []
     nLocks = (max ([max (x, key=op.itemgetter(0)) for x in tryDic.values()], key=op.itemgetter(0)))[0] + 1
@@ -415,8 +434,11 @@ def multi_analyze (tryDic, acqDic, relDic, namesVec, classL, overhead=0.0):
         acqSeqL = idx(cl, acqDic.values())
         relSeqL = idx(cl, relDic.values())
         routCntL.append(routingCntMtx(trySeqL, nLocks))
-        servTimeVecL.append(servTime(acqSeqL, relSeqL, dim=nLocks))
-        waitTimeVecL.append(servTime(trySeqL, relSeqL, dim=nLocks))
+        serv, servSq = servTime(acqSeqL, relSeqL, dim=nLocks)
+        servTimeVecL.append(serv)
+        servTimeSqVecL.append(servSq)
+        wait, _ = servTime(trySeqL, relSeqL, dim=nLocks)
+        waitTimeVecL.append(wait)
         r = np.maximum(routCntL[-1], np.ones_like (routCntL[-1]))
         sumInterArrivalM = interArrivalMtx (trySeqL, relSeqL, nLocks)
         avgIAML.append(np.divide (sumInterArrivalM, r))
@@ -425,22 +447,20 @@ def multi_analyze (tryDic, acqDic, relDic, namesVec, classL, overhead=0.0):
     IQs = map (insertIntermediateQs, routL, avgIAML, servTimeVecL)
     newRoutL, newServTimeVecL = zip (*IQs)
     
-    # a class/serv.time.vector matrix
-    servTimeM = np.zeros((len(classL), len(newServTimeVecL[0])))
-    for i, x in enumerate (newServTimeVecL):
-        servTimeM[i] = x
+    servTimeM = listOfArrToMtx (newServTimeVecL)
     qt = list(islice(cycle((1,0)), nLocks*2))
 
     ma_servTimeM = ma.array(servTimeM, mask = servTimeM == 0.0)
     ma_servTimeM[1::2] = ma_servTimeM[1::2] + overhead
     servTimeM2 = 1.0/ma_servTimeM
-
+    servTimeSqM = listOfArrToMtx (map (doubleDimWithZeros, servTimeSqVecL))
     
-    cntPerClass = map (np.sum, routCntL)
+    ExpRes = servTimeSqM / (2.0 * servTimeM)
 
+    cntPerClass = map (np.sum, routCntL)
     cntClassLock = zip(*[np.sum(x, axis=0) for x in routCntL])
 
-    return newRoutL, servTimeM2.T, tuple(map(len, classL)), qt, zip(*map(ma.getdata, waitTimeVecL)), avgIAML, routCntL
+    return newRoutL, servTimeM2.T, tuple(map(len, classL)), qt, zip(*map(ma.getdata, waitTimeVecL)), avgIAML, routCntL, ExpRes.T
 
 
 def analyze (tryDic, acqDic, relDic, namesVec, numT, smoothing, overheadF = lambda x: x):
