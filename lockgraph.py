@@ -1,5 +1,5 @@
 """SLAP-
-$ Time-stamp: <2011-10-10 15:53:07 jonatanlinden>
+$ Time-stamp: <2011-10-13 10:23:54 jonatanlinden>
 
 README:
 A collection of tools to do a queueing network analysis on sequences
@@ -420,7 +420,7 @@ def interArrivalMtx (tryDic, relDic, dim=0):
 # --------------------------------------------------------------------------
 # entry points of application
 
-
+# classL : list of lists, where each list contains the thread id's of one specific class.
 def multi_analyze (tryDic, acqDic, relDic, namesVec, classL, overhead=0.0):
 #generate routing, serv.time and interarrivals
     routCntL = []
@@ -460,10 +460,10 @@ def multi_analyze (tryDic, acqDic, relDic, namesVec, classL, overhead=0.0):
     cntPerClass = map (np.sum, routCntL)
     cntClassLock = zip(*[np.sum(x, axis=0) for x in routCntL])
 
-    return newRoutL, servTimeM2.T, tuple(map(len, classL)), qt, zip(*map(ma.getdata, waitTimeVecL)), avgIAML, routCntL, ExpRes.T
+    return newRoutL, servTimeM2.T, tuple(map(len, classL)), qt, waitTimeVecL, avgIAML, routCntL, ExpRes.T
 
 
-def analyze (tryDic, acqDic, relDic, namesVec, numT, smoothing, overheadF = lambda x: x):
+def analyze (tryDic, acqDic, relDic, namesVec, numT,overheadF = lambda x: x):
 
     cntTotalM = routingCntMtx(tryDic.values())
     sumInterArrivalTotalM = interArrivalMtx (tryDic.values(), relDic.values())
@@ -472,7 +472,8 @@ def analyze (tryDic, acqDic, relDic, namesVec, numT, smoothing, overheadF = lamb
     if sumInterArrivalTotalM.shape[0] != cntTotalM.shape[0]:
         print "WARNING: count matrix not same size as interarrival time matrix."
 
-    servTimeVec = servTime (acqDic.values(), relDic.values(), 100 - smoothing)
+    servTimeVec, servTimeVecSq = servTime (acqDic.values(), relDic.values(),dim=1)
+
     servTimeVecWithOH = overheadF(servTimeVec)
 
     # calculate avg transition time
@@ -485,7 +486,7 @@ def analyze (tryDic, acqDic, relDic, namesVec, numT, smoothing, overheadF = lamb
 
 def runandprintmva (rout, servRates, numT, tryDic, relDic, namesVec, cntTotalM):
     # mva it
-    T,N = mva (rout, servRates, numT)
+    T,N = st_mva (rout, servRates, numT)
     servTimes = 1/servRates[1::2]
     estincr  = (T*servRates)[1::2]
 
@@ -494,7 +495,7 @@ def runandprintmva (rout, servRates, numT, tryDic, relDic, namesVec, cntTotalM):
     # actual waiting time for numT threads
     actualWait = servTime(tryDic.values(), relDic.values())
 
-    for i,e in enumerate (estimate[1::2]):
+    for i,e in enumerate (T[1::2]):
         print '%s : act: %6.0f, est: %6.0f, serv: %6.0f, est.incr: %1.3f, acc: %d' % (namesVec[i], actualWait[i], T[1::2][i], servTimes[i], estincr[i], cntTot[i])
 
     return zip (namesVec, actualWait, T[1::2], servTimes, N[1::2])
