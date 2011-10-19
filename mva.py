@@ -1,11 +1,13 @@
 #!/usr/bin/env python
 
-import os,sys,math
+import os,sys,math,logging
 import operator as op
 import numpy as np
 from numpy.linalg import solve
 from itertools import *
 
+
+logging.basicConfig(format="%(levelName)s:%(funcName)s: %(message)s", level=logging.DEBUG)
 
 # STANDARD MVA
 
@@ -57,8 +59,8 @@ def ld_mva(e, ld_mu, M):
 
         # step 1 : for each queue, update the waiting time
         for i in range (K):
-            #T[i,m] = sum ([(j/ld_mu[i,j-1]) * sp[i,j-1,m-1] for j in range(1, m+1)])
-            T[i,m] = sum ([(j/ld_mu[i]) * sp[i,j-1,m-1] for j in range(1, m+1)])
+            T[i,m] = sum ([(j/ld_mu[i,j-1]) * sp[i,j-1,m-1] for j in range(1, m+1)]) 
+            #T[i,m] = sum ([(j/ld_mu[i]) * sp[i,j-1,m-1] for j in range(1, m+1)])
 
 		#step 2 : total throughput of network
         lam = m/np.dot (T[:,m],e)
@@ -68,13 +70,12 @@ def ld_mva(e, ld_mu, M):
 
         # update state probs
         for i in range (K):
-            #sp[i,1:m+1,m] = (lam/ld_mu[i,1:])*sp[i,:m,m-1]*e[i]
-            sp[i,1:m+1,m] = (lam/ld_mu[i])*sp[i,:m,m-1]*e[i]
+            sp[i,1:m+1,m] = (lam/ld_mu[i,0:m])*sp[i,:m,m-1]*e[i] # CHECK CORRECTNESS. LD_MU should be?
+            #sp[i,1:m+1,m] = (lam/ld_mu[i])*sp[i,:m,m-1]*e[i]
             sp[i,0,m] = 1. - sum (sp[i,:m+1,m])
-            
+
     # return the waiting times for the case when M customers are in the network
     return T[:,M], G[M], sp[:,:,M]
-
 
 
 # MULTICLASS MVA
@@ -158,9 +159,13 @@ def mva_multiclass(routL, servrates, nClassL, queueType, vr=None):
 
 # relation 5 in baynat paper
 # POST: load-dependent arrival rates
+# ld_mu, [1, N]
+# marg_p [0, N]
+# ld_lam [0, N-1]
 def rel5 (_ld_mu, marg_p):
     # hack
     if type(_ld_mu) is np.float64:
+        print "rel5: fix array"
         ld_mu = np.array([_ld_mu])
     else:
         ld_mu = _ld_mu
@@ -173,10 +178,11 @@ def rel5 (_ld_mu, marg_p):
 # POST: conditional throughput, [1, N]
 # ld_lam, [0, N-1]
 # marg_p, [0, N]
+# nu, [1, N]
 def rel3(ld_lam, marg_p):
     cond_nu = np.zeros_like(ld_lam)
-    for n in range(1, cond_nu.shape[0]+1):
-        cond_nu[n-1] = ld_lam[n-1]*marg_p[n-1]/marg_p[n]
+    for n in range(cond_nu.shape[0]):
+        cond_nu[n] = ld_lam[n]*marg_p[n]/marg_p[n+1]
     return cond_nu
 
 
@@ -239,6 +245,87 @@ def gen_mc2 (ld_lam, lam_r, mu_c):
     gen_mtx[6,1] = lam_r
 
     return gen_mtx + (-gen_mtx.sum(axis=1)) * np.identity(n_states)
+
+def pack (st, o0, o1):
+    return (((st << 2) + o0) << 2) + o1
+
+def pack2 (st, o):
+    return (st << 4) + o
+
+def get_b (i, mask, offs):
+    return (i & mask) >> offs
+
+
+def cond (i):
+    m10 = 1 << 5
+    m01 = 1 << 4
+    orbc0 = 3 << 2
+    orbc1 = 3
+
+    return ((orbc1 & i) > 2 or get_b(i, orbc0, 2) > 2) or \
+           (get_b(i, m01, 4) + get_b(i, m10, 5) > 1) or \
+           ((orbc1 & i) + get_b(i, orbc0, 2) > 3) or \
+           ((orbc1 & i) + get_b(i, m01, 4) > 2 or get_b(i, orbc0, 2) + get_b(i, m10, 5) > 2)
+    
+# ld_lam[class, ncust]
+def gen_mc3 (ld_lam, lam_r, mu_c):
+    n_states = 39
+    gen_mtx = np.zeros((n_states, n_states))
+    #100110/38 is max
+    #00 mask
+    m11 = 3 << 4
+    m10 = 1 << 5
+    m01 = 1 << 4
+
+    orbc0 = 3 << 2
+    orbc1 = 3
+    orb = 15
+    
+    for i in range(n_states):
+        if cond(i):
+            continue
+        
+        #00m
+        if not m11 & i:
+            logging.debug("%i%i%i%i", get_b(i, m10, 5), get_b(i, m01, 4), get_b(i, orbc0, 2), orbc1 & i)
+            # lam
+            if get_b(i, orbc0, 2) < 2:
+                gen_mtx[i,pack2(2,orb & i)] = ld_lam[0, get_b(i,orbc0,2)]
+            if orbc1 & i < 2:
+                gen_mtx[i,pack2(1,orb & i)] = ld_lam[1, (orbc1 & i)]
+
+            # lam_r
+            if orbc0 & i and orbc1 & i:
+                rate = lam_r/2.
+            else:
+                rate = lam_r
+            if orbc0 & i:
+                gen_mtx[i,pack(2, get_b(i, orbc0, 2) - 1, orbc1 & i)] = rate
+            if orbc1 & i:
+                gen_mtx[i,pack(1, get_b(i, orbc0, 2), (orbc1 & i) - 1)] = rate
+                
+        if m10 & i:
+
+            # mu
+            gen_mtx[i,pack2(0, orb & i)] = mu_c[0]
+            # busy, lam_c : only if exists custs.
+            if get_b(i, orbc0, 2) < 1:
+                gen_mtx[i,pack(2, get_b(i, orbc0, 2) + 1, orbc1 & i)] = ld_lam[0, 1]
+            if orbc1 & i < 2:
+                gen_mtx[i,pack(2, get_b(i, orbc0, 2), orbc1 & i + 1)] = ld_lam[1, (orbc1 & i)]
+            
+        if m01 & i:
+
+            gen_mtx[i,pack2(0, orb & i)] = mu_c[1]
+
+            if get_b(i, orbc0, 2) < 2:
+                gen_mtx[i,pack(1, get_b(i, orbc0, 2) + 1, orbc1 & i)] = ld_lam[0, get_b(i, orbc0, 2)]
+            if orbc1 & i < 1:
+                gen_mtx[i,pack(1, get_b(i, orbc0, 2), orbc1 & i + 1)] = ld_lam[1, 1]
+
+    gen_mtx += (-gen_mtx.sum(axis=1)) * np.identity(n_states)
+    filt = (gen_mtx > 0.).any(axis=1)
+    return prune(gen_mtx, filt), filt
                        
 def retrial_margp(steadystate):
     n_cust = steadystate.shape[0]/2+1
@@ -256,6 +343,32 @@ def retrial_margp_c (st):
     margp[0,0] = 1. - margp[0,1]
     margp[1,0] = 1. - margp[1,1]
     return margp
+
+# class = 0 or 1
+def cust(cls, i):
+    return (((1 << 4 + cls) & i) >> 4 + cls) + ((i & (3 << (cls * 2))) >> (cls * 2))
+
+# 2 class generic
+def retrial_margp_c2 (st, filter):
+    size = filter.shape[0]
+    restored_ps = np.zeros(size)
+    restored_ps[filter] = st
+    marg = np.zeros((2,3))
+    for i in range(2):
+        for j in range(size):
+            if cond(j):
+                continue
+            logging.debug("%i%i%i%i : %.3f", get_b(j, 1 << 5, 5), get_b(j, 1 << 4, 4), get_b(j, 3 << 2, 2), 3 & j, restored_ps[j])
+            
+            marg[i, cust(i, j)] += restored_ps[j]
+    return marg
+
+def conv_ld_mu(serv_times, cust):
+    layer = serv_times.T.copy()
+    layer2 = serv_times.T.copy()
+    layer2[:,0] = layer2[:,0] * 2.
+    return np.dstack((layer, layer2))
+
     
 # try2D, acq2D, rel2D, names2D = parseDicTuple('/Users/jonatanlinden/res/micro/output_2_pe_30')
 # analres = multi_analyze(try2D, acq2D, rel2D, names2D, [[0],[1]])
@@ -263,61 +376,78 @@ def retrial_margp_c (st):
 # rout : list of routing mtcs
 # serv_times : matrix with load dependent serv rates per class
 # serv_times[class, q, load]
-def run_marie(rout, serv_times):
+def run_marie(rout, serv_times, sched_oh):
     #ld_mu_c0[server, load]
     #ld_mu_c0 = np.vstack ((serv_times, serv_times)).T
     #ld_mu_c0[0,1] = 2*ld_mu_c0[0,1]
     #ld_mu_c1 = ld_mu_c0.copy()
 
-    # in the analysis in isolation, the mu doesn't change
-    fix_mu = serv_times[:,1]
+    # in the analysis in isolation, the mu doesn't change?
+    fix_mu = serv_times[:,1,0]
 
     ld_mu_c0 = serv_times[0].copy()
     ld_mu_c1 = serv_times[1].copy()
     
     old_ld_mu_c0 = np.zeros_like(ld_mu_c0)
     old_ld_mu_c1 = np.zeros_like(ld_mu_c1)
-    e = getVisitRatio(rout[0])
-    lam_r = 1/4540.
-    while (not (mtx_eq(old_ld_mu_c0, ld_mu_c0, 0.00001*np.max(ld_mu_c0)) and mtx_eq(old_ld_mu_c1, ld_mu_c1, 0.00001*np.max(ld_mu_c1)))):
-        _,_,marg_p_c0 = ld_mva(e, ld_mu_c0, 1)
-        _,_,marg_p_c1 = ld_mva(e, ld_mu_c1, 1)
+    print 1/ld_mu_c0/2.27
+    print 1/ld_mu_c1/2.27
+    cnt = 0
 
+    e = getVisitRatio(rout[0])
+    lam_r = 1./sched_oh
+    while (not (mtx_eq(old_ld_mu_c0, ld_mu_c0, 0.00001*np.max(ld_mu_c0)) and mtx_eq(old_ld_mu_c1, ld_mu_c1, 0.00001*np.max(ld_mu_c1)))):
+        T0,_,marg_p_c0 = ld_mva(e, ld_mu_c0, 2)
+        T1,_,marg_p_c1 = ld_mva(e, ld_mu_c1, 2)
+
+        print marg_p_c0
+        print marg_p_c1
+
+        print T0
+        print T1
 
         if conv_cond0(marg_p_c0, 0.01):
             print "cond0"
             break
         
-        # ld_lam, defined for [0, N-1]
-        # ld_lam[server, load]
+        # ld_lam, defined for [0, N-1], only for server 1
         ld_lam_c0 = rel5(ld_mu_c0[1], marg_p_c0[1])
         ld_lam_c1 = rel5(ld_mu_c1[1], marg_p_c1[1])
         print np.array([ld_lam_c0, ld_lam_c1])
+
         #mc = gen_mc(ld_lam_c0, lam_r, serv_times[1])
-    
-        mc = gen_mc2(np.array([ld_lam_c0,ld_lam_c1]), lam_r, fix_mu)
+        #mc = gen_mc2(np.array([ld_lam_c0,ld_lam_c1]), lam_r, fix_mu)
+        
+        mc, filt = gen_mc3(np.array([ld_lam_c0,ld_lam_c1]), lam_r, fix_mu)
+
+        #return mc, np.array([ld_lam_c0, ld_lam_c1])
 
         steadystate = solve_ctmc(mc)
-        loc_marg_p = retrial_margp_c(steadystate)
+        loc_marg_p = retrial_margp_c2(steadystate, filt)
+        #loc_marg_p = retrial_margp_c(steadystate)
         #loc_marg_p = retrial_margp(steadystate)
         print loc_marg_p
+
         cond_thr_c0 = rel3(ld_lam_c0, loc_marg_p[0])
         cond_thr_c1 = rel3(ld_lam_c1, loc_marg_p[1])
-        #print np.array([cond_thr_c0, cond_thr_c1])
+
+        print cond_thr_c0
+
         old_ld_mu_c0 = ld_mu_c0.copy()
         old_ld_mu_c1 = ld_mu_c1.copy()
         ld_mu_c0[1] = cond_thr_c0
         ld_mu_c1[1] = cond_thr_c1
 
-    print "exiting:"
-    print ld_mu_c0
-    print old_ld_mu_c0
-    print ld_mu_c1
-    print old_ld_mu_c1
+        print ld_mu_c0
+        print ld_mu_c1
 
-    print ld_mva(e, ld_mu_c0, 1)
-    print ld_mva(e, ld_mu_c1, 1)
-    return ld_mu_c0
+    print "exiting:"
+    print 1/ld_mu_c0/2.27
+    print 1/ld_mu_c1/2.27
+
+    print ld_mva(e, ld_mu_c0, 2)
+    print ld_mva(e, ld_mu_c1, 2)
+    return ld_mu_c0, ld_mu_c1
 
 
 def conv_cond0(marg_p, eps):
@@ -327,6 +457,14 @@ def conv_cond0(marg_p, eps):
     return zero_c < eps
 
 # ************************* HELPER FUNCTIONS ************************************
+
+def prune (mtx, filter):
+    '''Prunes a matrix in all dimensions, based on the boolean vector filter
+    '''
+    for i in np.arange(mtx.ndim):
+        mtx = np.compress(filter, mtx, axis=i)
+    return mtx
+
 
 def mtx_eq (mtx0, mtx1, epsilon):
     return np.alltrue(np.absolute(mtx1 - mtx0) < epsilon)
@@ -341,6 +479,7 @@ def solve_ctmc(mc):
     a[-1] = 1.0
     r = np.vstack((mc.T, np.ones(n_states)))
     return np.linalg.lstsq(r, a)[0]
+
 
 # return prob of state with pop vector K, K[i] #cust at node i in load-dep
 def state_prob (G, K, e, ld_mu):
@@ -364,17 +503,6 @@ def F_FCFS_singleserv (S, e, ld_mu):
     print prod_1
     return k_fac/prod_0*prod_1
 
-
-# mean value of retrial queue with deterministic retrial time, only retrial
-# of head of the orbit, and new retrial time beginning at a service completion epoch
-def mean_retr(detrate, exprate, servrate, e_res):
-    rho = exprate/servrate
-
-    alpha = np.exp(-exprate*detrate)
-    dirt = rho/(alpha-rho)*(e_res + (1.0-alpha)/exprate)
-    
-    return np.nan_to_num(dirt)
-    
 
 def getVisitRatios(routL):
     return map(getVisitRatio, routL)
