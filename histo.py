@@ -70,6 +70,17 @@ def maxLockdist (timeline):
             pos = i
     return (maxval, pos)
 
+def mysum(l):
+    s2 = 0
+    s = 0
+    for e in l:
+        s += e
+        s2 += e * e
+    return (s, s2)
+
+def variance (timeline):
+    return mysum([x[2]] for x in timeline)
+
 
 def timeLineSeq (startSeq, endSeq):
     return map (lambda (i,x): (x[1], endSeq[i][1] - x[1], x[0]), enumerate (startSeq))
