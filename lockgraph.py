@@ -1,5 +1,5 @@
 """SLAP-
-$ Time-stamp: <2011-10-13 10:23:54 jonatanlinden>
+$ Time-stamp: <2011-10-26 08:53:56 jonatanlinden>
 
 README:
 A collection of tools to do a queueing network analysis on sequences
@@ -175,7 +175,7 @@ def lockDictFromRecords(recFile):
     '''Parses a record on the format "tsc tID lID" and returns a
     dictionary where the key is the thread id, and the value is an
     ordered list of (lID, tsc) tuples. Assumes that the list is sorted
-    in increasing order by timestamp
+    in increasing order by timestamp (at least per thread id, row[1])
     '''
     tidDict = defaultdict(list)
     recReader = csv.reader (recFile, delimiter=' ', skipinitialspace=True)

@@ -18,7 +18,7 @@ def st_mva(p, u, M, q_type=None):
     if not q_type:
         q_type = np.array(map (lambda (i): i % 2, range(K)))
 
-    v = getVisitRatio(p)
+    v = solve_dtmc(p)
 
     N = np.zeros((K,M+1)) # matrix for queue length of node K with M customers 
     W = np.zeros((K,M+1)) # response time of node K with M customers
@@ -59,8 +59,8 @@ def ld_mva(e, ld_mu, M):
 
         # step 1 : for each queue, update the waiting time
         for i in range (K):
-            T[i,m] = sum ([(j/ld_mu[i,j-1]) * sp[i,j-1,m-1] for j in range(1, m+1)]) 
-            #T[i,m] = sum ([(j/ld_mu[i]) * sp[i,j-1,m-1] for j in range(1, m+1)])
+            #T[i,m] = sum ([(j/ld_mu[i,j-1]) * sp[i,j-1,m-1] for j in range(1, m+1)]) 
+            T[i,m] = sum ([(j/ld_mu[i]) * sp[i,j-1,m-1] for j in range(1, m+1)])
 
 		#step 2 : total throughput of network
         lam = m/np.dot (T[:,m],e)
@@ -70,8 +70,8 @@ def ld_mva(e, ld_mu, M):
 
         # update state probs
         for i in range (K):
-            sp[i,1:m+1,m] = (lam/ld_mu[i,0:m])*sp[i,:m,m-1]*e[i] # CHECK CORRECTNESS. LD_MU should be?
-            #sp[i,1:m+1,m] = (lam/ld_mu[i])*sp[i,:m,m-1]*e[i]
+            #sp[i,1:m+1,m] = (lam/ld_mu[i,0:m])*sp[i,:m,m-1]*e[i] # CHECK CORRECTNESS. LD_MU should be?
+            sp[i,1:m+1,m] = (lam/ld_mu[i])*sp[i,:m,m-1]*e[i]
             sp[i,0,m] = 1. - sum (sp[i,:m+1,m])
 
     # return the waiting times for the case when M customers are in the network
@@ -92,7 +92,7 @@ def mva_multiclass(routL, servrates, nClassL, queueType, vr=None):
     if vr != None:
         e = vr
     else:
-        e = np.array(getVisitRatios(routL))
+        e = np.array(map(solve_dtmc, routL))
 
     #STEP 1: initialize the number of jobs matrices,
     # N and T are dictionaries of matrices, the keys are the pop.vectors
@@ -165,7 +165,7 @@ def mva_multiclass(routL, servrates, nClassL, queueType, vr=None):
 def rel5 (_ld_mu, marg_p):
     # hack
     if type(_ld_mu) is np.float64:
-        print "rel5: fix array"
+        #print "rel5: fix array"
         ld_mu = np.array([_ld_mu])
     else:
         ld_mu = _ld_mu
@@ -245,6 +245,42 @@ def gen_mc2 (ld_lam, lam_r, mu_c):
     gen_mtx[6,1] = lam_r
 
     return gen_mtx + (-gen_mtx.sum(axis=1)) * np.identity(n_states)
+
+def gen_emc2 (gen_mtx):
+    return (gen_mtx.T/- np.diag(gen_mtx) + np.identity(gen_mtx.shape[0])).T
+
+def gen_emc (ld_lam, lam_r, mu_c):
+    n_states = 7
+    emc  = np.zeros((n_states, n_states))
+
+    # limit cases
+    emc[0,1] = ld_lam[0,0]/(ld_lam[0,0]+ld_lam[1,0])
+    emc[0,2] = 1. - emc[0,1]
+
+    # 1: 1000
+    emc[1,0] = mu_c[0]/(mu_c[0]+ld_lam[1,0])
+    emc[1,3] = 1. - emc[1,0]
+
+    # 2: 0100
+    emc[2,0] = mu_c[1]/(mu_c[1]+ld_lam[0,0])
+    emc[2,4] = 1. - emc[2,0]
+
+    # 3: 1001
+    emc[3,5] = 1.
+
+    # 4: 0110
+    emc[4,6] = 1.
+
+    # 5: 0001
+    emc[5,3] = 1. - math.exp(-ld_lam[0,0]*(1./lam_r)) # here's the difference from the regular emc
+    emc[5,2] = 1. - emc[5,3]
+    
+    # 6: 0010
+    emc[6,4] = 1. - math.exp(-ld_lam[1,0]*(1./lam_r)) # here's the difference from the regular emc
+    emc[6,1] = 1. - emc[6,4]
+    return emc
+
+    
 
 def pack (st, o0, o1):
     return (((st << 2) + o0) << 2) + o1
@@ -363,11 +399,15 @@ def retrial_margp_c2 (st, filter):
             marg[i, cust(i, j)] += restored_ps[j]
     return marg
 
+
+
+# or, when #cust = 1,1, then serv_times.T
 def conv_ld_mu(serv_times, cust):
     layer = serv_times.T.copy()
     layer2 = serv_times.T.copy()
     layer2[:,0] = layer2[:,0] * 2.
     return np.dstack((layer, layer2))
+
 
     
 # try2D, acq2D, rel2D, names2D = parseDicTuple('/Users/jonatanlinden/res/micro/output_2_pe_30')
@@ -376,14 +416,15 @@ def conv_ld_mu(serv_times, cust):
 # rout : list of routing mtcs
 # serv_times : matrix with load dependent serv rates per class
 # serv_times[class, q, load]
-def run_marie(rout, serv_times, sched_oh):
+def run_marie(rout, serv_times, n_cust, sched_oh):
     #ld_mu_c0[server, load]
     #ld_mu_c0 = np.vstack ((serv_times, serv_times)).T
     #ld_mu_c0[0,1] = 2*ld_mu_c0[0,1]
     #ld_mu_c1 = ld_mu_c0.copy()
 
     # in the analysis in isolation, the mu doesn't change?
-    fix_mu = serv_times[:,1,0]
+    #fix_mu = serv_times[:,1,0]
+    fix_mu = serv_times[:,1]
 
     ld_mu_c0 = serv_times[0].copy()
     ld_mu_c1 = serv_times[1].copy()
@@ -394,14 +435,12 @@ def run_marie(rout, serv_times, sched_oh):
     print 1/ld_mu_c1/2.27
     cnt = 0
 
-    e = getVisitRatio(rout[0])
+    e = solve_dtmc(rout[0])
     lam_r = 1./sched_oh
     while (not (mtx_eq(old_ld_mu_c0, ld_mu_c0, 0.00001*np.max(ld_mu_c0)) and mtx_eq(old_ld_mu_c1, ld_mu_c1, 0.00001*np.max(ld_mu_c1)))):
-        T0,_,marg_p_c0 = ld_mva(e, ld_mu_c0, 2)
-        T1,_,marg_p_c1 = ld_mva(e, ld_mu_c1, 2)
+        T0,_,marg_p_c0 = ld_mva(e, ld_mu_c0, n_cust)
+        T1,_,marg_p_c1 = ld_mva(e, ld_mu_c1, n_cust)
 
-        print marg_p_c0
-        print marg_p_c1
 
         print T0
         print T1
@@ -413,40 +452,62 @@ def run_marie(rout, serv_times, sched_oh):
         # ld_lam, defined for [0, N-1], only for server 1
         ld_lam_c0 = rel5(ld_mu_c0[1], marg_p_c0[1])
         ld_lam_c1 = rel5(ld_mu_c1[1], marg_p_c1[1])
-        print np.array([ld_lam_c0, ld_lam_c1])
-
-        #mc = gen_mc(ld_lam_c0, lam_r, serv_times[1])
-        #mc = gen_mc2(np.array([ld_lam_c0,ld_lam_c1]), lam_r, fix_mu)
+        ld_lam = np.array([ld_lam_c0, ld_lam_c1])
+        print ld_lam
         
-        mc, filt = gen_mc3(np.array([ld_lam_c0,ld_lam_c1]), lam_r, fix_mu)
+        #mc = gen_mc(ld_lam_c0, lam_r, serv_times[1])
+        mc = gen_mc2(ld_lam, lam_r, fix_mu)
+        emc= gen_emc(ld_lam, lam_r, fix_mu)
+        emc_steady = solve_dtmc(emc)
+        mc_steady = solve_ctmc(mc)
+
+
+
+        mc2 = mc-np.diag(mc)*np.identity(mc.shape[0])
+        _H = mc2.sum(axis=1)
+        _H[5] = (1./lam_r)*ld_lam[0,0]
+        _H[6] = (1./lam_r)*ld_lam[1,0]
+        H = 1./_H
+
+        print H
+
+        print emc_steady
+        hm = emc_steady*H
+        print hm
+        hmtot = hm.sum()
+        print hmtot
+        steadystate = hm/hmtot
+        print "SS: ", steadystate
+        mc_steady = solve_ctmc(mc)
+        print retrial_margp_c(mc_steady)
+        #mc, filt = gen_mc3(np.array([ld_lam_c0,ld_lam_c1]), lam_r, fix_mu)
 
         #return mc, np.array([ld_lam_c0, ld_lam_c1])
 
-        steadystate = solve_ctmc(mc)
-        loc_marg_p = retrial_margp_c2(steadystate, filt)
-        #loc_marg_p = retrial_margp_c(steadystate)
+        #steadystate = solve_ctmc(mc)
+        #print steadystate
+        #loc_marg_p = retrial_margp_c2(steadystate, filt)
+        loc_marg_p = retrial_margp_c(steadystate)
         #loc_marg_p = retrial_margp(steadystate)
         print loc_marg_p
 
         cond_thr_c0 = rel3(ld_lam_c0, loc_marg_p[0])
         cond_thr_c1 = rel3(ld_lam_c1, loc_marg_p[1])
 
-        print cond_thr_c0
-
         old_ld_mu_c0 = ld_mu_c0.copy()
         old_ld_mu_c1 = ld_mu_c1.copy()
         ld_mu_c0[1] = cond_thr_c0
         ld_mu_c1[1] = cond_thr_c1
 
-        print ld_mu_c0
-        print ld_mu_c1
+        #print ld_mu_c0
+        #print ld_mu_c1
 
     print "exiting:"
-    print 1/ld_mu_c0/2.27
-    print 1/ld_mu_c1/2.27
+    print 1/ld_mu_c0
+    print 1/ld_mu_c1
 
-    print ld_mva(e, ld_mu_c0, 2)
-    print ld_mva(e, ld_mu_c1, 2)
+    print ld_mva(e, ld_mu_c0, n_cust)
+    print ld_mva(e, ld_mu_c1, n_cust)
     return ld_mu_c0, ld_mu_c1
 
 
@@ -480,35 +541,7 @@ def solve_ctmc(mc):
     r = np.vstack((mc.T, np.ones(n_states)))
     return np.linalg.lstsq(r, a)[0]
 
-
-# return prob of state with pop vector K, K[i] #cust at node i in load-dep
-def state_prob (G, K, e, ld_mu):
-    n_serv = len (K)
-    prod = reduce (op.mul, [F_FCFS_singleserv([K[i]], e, ld_mu[i]) for i in range(n_serv)], 1.0)
-    return 1/G*prod
-
-# S class pop vector
-# F_i from Gunther Bolsch book
-def F_FCFS_singleserv (S, e, ld_mu):
-    k = sum (S)
-    n_class = len (S)
-    k_fac = factorial(k)
-    # assumes same service rate for all classes - not a problem in single class setting
-    if k > 0:
-        prod_0 = reduce (op.mul, [ld_mu[i] for i in range(k)], 1)
-    else:
-        prod_0 = 1.0
-    print prod_0
-    prod_1 = reduce (op.mul, [1.0/factorial(S[r]) * e[r]**S[r] for r in range(n_class)],1)
-    print prod_1
-    return k_fac/prod_0*prod_1
-
-
-def getVisitRatios(routL):
-    return map(getVisitRatio, routL)
-
-
-def getVisitRatio(p):
+def solve_dtmc(p):
     K = len(p) #number of queues
     # A K by K identify matrix to be used later to solve the traffic equation
     I = np.identity(K)
@@ -604,7 +637,8 @@ def mva_dsa_multiclass(routL, servrates, nClassL, queueType, vr=None):
     K = len (servrates)
     nC = len (routL)
     U = np.zeros((K, nC))
-    e = np.array(getVisitRatios(routL))
+    # visit ratios
+    e = np.array(map(solve_dtmc, routL))
     cnt = 0
     # scale factors for each server
     sf = np.ones(len(servrates))
