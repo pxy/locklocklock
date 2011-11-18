@@ -6,7 +6,7 @@ fi
 
 
 #for i in 500 750 1000 1100 1150 1200 1250 1300 1350 1400 1500 1750 2000 10000 50000 100000; do 
-for i in 9500 40000 60000 80000 90000; do
+for i in 1000 5000 10000 20000 30000 40000 50000 60000 70000 80000 90000; do
     if [[ $MODE = 1 ]]; then
         scp -r kalkyl.uppmax.uu.se:locklocklock/lock_impl_bm/"$i" .
         continue

@@ -1,3 +1,4 @@
+from collections import defaultdict
 import numpy as np
 import os, csv, string
 from itertools import *
@@ -55,10 +56,8 @@ def writeHisto2 (hist, name, path):
 	fd.write ('# ' + name + '\n')
 	np.savetxt(fd, hist, delimiter=' ', fmt='%d')
 
-
-
 def writeResult (name, path, data):
-	w = csv.writer(open(path + os.sep + name + '.dat', 'w'), delimiter=' ')
+	w = csv.writer(open(path + os.sep + name + '.dat', 'w'), delimiter=' ', lineterminator='\n')
 	w.writerows(data)
 
 def maxLockdist (timeline):
@@ -70,6 +69,7 @@ def maxLockdist (timeline):
             pos = i
     return (maxval, pos)
 
+
 def mysum(l):
     s2 = 0
     s = 0
@@ -77,6 +77,7 @@ def mysum(l):
         s += e
         s2 += e * e
     return (s, s2)
+
 
 def variance (timeline):
     return mysum([x[2]] for x in timeline)
@@ -86,10 +87,10 @@ def timeLineSeq (startSeq, endSeq):
     return map (lambda (i,x): (x[1], endSeq[i][1] - x[1], x[0]), enumerate (startSeq))
 
 def timeLineSeq2 (startSeq, middleSeq, endSeq, tag):
-    return map (lambda (i,x): (x[1], endSeq[i][1] - x[1], endSeq[i][1] - middleSeq[i][1], x[0], tag), enumerate (startSeq))
+    return map (lambda (i,x): (x[1], endSeq[i][1] - x[1], endSeq[i][1] - middleSeq[i][1], tag, x[0]), enumerate (startSeq))
 
 def timeLineSeq3 (startSeq, middleSeq, endSeq, tag):
-    return map (lambda (i,x): (x[1], middleSeq[i][1],endSeq[i][1], tag), enumerate (startSeq))
+    return map (lambda (i,x): (x[1], middleSeq[i][1],endSeq[i][1], tag, x[0]), enumerate (startSeq))
 
 def partitionCount (tl, partitionStrategy=lambda x: x[1]):
     tl2 = sorted(tl, key=partitionStrategy)
@@ -198,10 +199,10 @@ class bcolors:
         self.ENDC = ''
 
 
-def flattentupL(tupL):
+def flattentupL(tup_l):
     l = []
-    for tup in tupL:
-        l.extend(zip(tup[0:3], [tup[3],tup[3],tup[3]]))
+    for tup in tup_l:
+        l.extend(zip(tup[0:3], [tup[3],tup[3],tup[3]], [tup[4], tup[4], tup[4]]))
     return l
 
 def realtimeline(timelines):
@@ -271,3 +272,63 @@ def cntBursts (timelines, idx0, idx1):
                 mxval = _cnt
                 mxidx = cntx1
     return sm, mxidx
+
+
+
+def timeline_id(tryD, acqD, relD, tid_l):
+    return realtimeline(map (timeLineSeq3, tryD.values(), acqD.values(), relD.values(), tid_l))
+
+
+def cnt_unfair (merged_tls, n_threads):
+    '''Counts the number of unfair lock handovers.
+
+    Args:
+    merged_tls -- A list of tuples (timestamp,tid), representing
+    the point of time of a change of state of the thread in relation
+    to the lock (try, acquire, release)
+    '''
+    cnts = np.zeros(n_threads)
+    lids = np.array(list(repeat(-1, n_threads)))
+    last = {}
+    fair   = 0
+    unfair = 0
+
+    for (t,i,l) in merged_tls:
+        cnts[i] = (cnts[i] + 1) % 3
+
+        lids[i] = l
+        # if we have grabbed the lock
+
+        if cnts[i] == 2:
+            # was it fair or not?
+            if l in last and last[l] == i and sum(wl == l for wl in lids) > 1:
+                unfair += 1
+            else:
+                fair += 1
+        last[l] = i
+        if cnts[i] == 0: # 
+            lids[i] = -1
+            # reduce space reqs when there is a lot of locks
+            if sum(wl == l for wl in lids) < 1:
+                del (last[l])
+        
+    return (fair, unfair)
+    
+
+            
+def gen_plot_wait_serv(path, name, _serv, est_wait, act_wait):
+# each input is 
+    serv = _serv.filled(0)
+    w = csv.writer(open(path + os.sep + name + '.dat', 'w'), delimiter=' ', lineterminator='\n')
+    
+    w.writerow("# act_queue est_queue serv_t")
+    w.writerow("# class 0")
+    w.writerows(zip(act_wait[:,0] - serv[:,0], est_wait[:,0] - serv[:,0], serv[:,0]))
+    w.writerows(['',''])
+    w.writerow("# class 2")
+    w.writerows(zip(act_wait[:,2] - serv[:,2], est_wait[:,2] - serv[:,2], serv[:,2]))
+    
+    
+
+        
+

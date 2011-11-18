@@ -1,5 +1,5 @@
 """SLAP-
-$ Time-stamp: <2011-10-26 08:53:56 jonatanlinden>
+$ Time-stamp: <2011-11-18 16:04:06 jonatanlinden>
 
 README:
 A collection of tools to do a queueing network analysis on sequences
@@ -48,6 +48,9 @@ def dictToArray (dict):
     return arr
 
 def dictToMatrix (dict, dim = 0):
+    '''Converts a two-level nested dictionary to a matrix, where the rows are given by
+    the values of the outer dictionary.
+    '''
     if dim == 0:
         dim = findGr8estKey (dict) + 1
     mtx = np.zeros ((dim, dim))
@@ -429,6 +432,16 @@ def multi_analyze (tryDic, acqDic, relDic, namesVec, classL, overhead=0.0):
     avgIAML = []
     waitTimeVecL = []
     nLocks = (max ([max (x, key=op.itemgetter(0)) for x in tryDic.values()], key=op.itemgetter(0)))[0] + 1
+
+    # same serv time for all threads
+    #servTimeVec, _ = servTime (acqDic.values(), relDic.values(),dim=nLocks)
+    #cntTotalM = routingCntMtx(tryDic.values())
+    #sumInterArrivalTotalM = interArrivalMtx (tryDic.values(), relDic.values())
+    #r = np.maximum(cntTotalM, np.ones_like (cntTotalM))
+    #avgInterArrivalTotalM = np.divide (sumInterArrivalTotalM, r)
+    #rout = normalizeRowWise (cntTotalM)
+    #_, servTimes = insertIntermediateQs (rout, avgInterArrivalTotalM, servTimeVec)
+
     for cl in classL:
         trySeqL = idx(cl, tryDic.values())
         acqSeqL = idx(cl, acqDic.values())
@@ -436,7 +449,7 @@ def multi_analyze (tryDic, acqDic, relDic, namesVec, classL, overhead=0.0):
         routCntL.append(routingCntMtx(trySeqL, nLocks))
         serv, servSq = servTime(acqSeqL, relSeqL, dim=nLocks)
         servTimeVecL.append(serv)
-        servTimeSqVecL.append(servSq)
+        #servTimeSqVecL.append(servSq)
         wait, _ = servTime(trySeqL, relSeqL, dim=nLocks)
         waitTimeVecL.append(wait)
         r = np.maximum(routCntL[-1], np.ones_like (routCntL[-1]))
@@ -446,6 +459,8 @@ def multi_analyze (tryDic, acqDic, relDic, namesVec, classL, overhead=0.0):
     routL = map (normalizeRowWise, routCntL)
     IQs = map (insertIntermediateQs, routL, avgIAML, servTimeVecL)
     newRoutL, newServTimeVecL = zip (*IQs)
+
+    #newServTimeVecL = list(repeat(servTimes, len(newRoutL)))
     
     servTimeM = listOfArrToMtx (newServTimeVecL)
     qt = list(islice(cycle((1,0)), nLocks*2))
@@ -453,26 +468,26 @@ def multi_analyze (tryDic, acqDic, relDic, namesVec, classL, overhead=0.0):
     ma_servTimeM = ma.array(servTimeM, mask = servTimeM == 0.0)
     ma_servTimeM[1::2] = ma_servTimeM[1::2] + overhead
     servTimeM2 = 1.0/ma_servTimeM
-    servTimeSqM = listOfArrToMtx (map (doubleDimWithZeros, servTimeSqVecL))
-    
-    ExpRes = servTimeSqM / (2.0 * servTimeM)
 
     cntPerClass = map (np.sum, routCntL)
     cntClassLock = zip(*[np.sum(x, axis=0) for x in routCntL])
+    
+    waitTimeVectors = np.array(map(list, zip(*[l.filled(0) for l in waitTimeVecL])))
 
-    return newRoutL, servTimeM2.T, tuple(map(len, classL)), qt, waitTimeVecL, avgIAML, routCntL, ExpRes.T
+    return newRoutL, servTimeM2.T, tuple(map(len, classL)), qt, waitTimeVectors, avgIAML, routCntL
 
 
 def analyze (tryDic, acqDic, relDic, namesVec, numT,overheadF = lambda x: x):
 
     cntTotalM = routingCntMtx(tryDic.values())
     sumInterArrivalTotalM = interArrivalMtx (tryDic.values(), relDic.values())
-
+    nLocks = (max ([max (x, key=op.itemgetter(0)) for x in tryDic.values()], key=op.itemgetter(0)))[0] + 1
+    
     # sanity check
     if sumInterArrivalTotalM.shape[0] != cntTotalM.shape[0]:
         print "WARNING: count matrix not same size as interarrival time matrix."
 
-    servTimeVec, servTimeVecSq = servTime (acqDic.values(), relDic.values(),dim=1)
+    servTimeVec, servTimeVecSq = servTime (acqDic.values(), relDic.values(),dim=nLocks)
 
     servTimeVecWithOH = overheadF(servTimeVec)
 
@@ -487,14 +502,16 @@ def analyze (tryDic, acqDic, relDic, namesVec, numT,overheadF = lambda x: x):
 def runandprintmva (rout, servRates, numT, tryDic, relDic, namesVec, cntTotalM):
     # mva it
     T,N = st_mva (rout, servRates, numT)
+    servRates = servRates.compressed()
     servTimes = 1/servRates[1::2]
     estincr  = (T*servRates)[1::2]
 
     cntTot = np.sum (cntTotalM, axis=0)
 
     # actual waiting time for numT threads
-    actualWait = servTime(tryDic.values(), relDic.values())
-
+    _actualWait, _ = servTime(tryDic.values(), relDic.values())
+    actualWait = _actualWait.compressed()
+    
     for i,e in enumerate (T[1::2]):
         print '%s : act: %6.0f, est: %6.0f, serv: %6.0f, est.incr: %1.3f, acc: %d' % (namesVec[i], actualWait[i], T[1::2][i], servTimes[i], estincr[i], cntTot[i])
 
