@@ -1,5 +1,5 @@
 """SLAP-
-$ Time-stamp: <2011-11-18 16:04:06 jonatanlinden>
+$ Time-stamp: <2011-11-21 11:39:20 jonatanlinden>
 
 README:
 A collection of tools to do a queueing network analysis on sequences
@@ -110,10 +110,16 @@ def listOfArrToMtx (list):
         mtx[i,0:len(row)] = row
     return mtx
 
-def imax(l, _key=None):
+def imax(l, key=None):
     '''Indexed max function
     '''
-    return l.index(max(l, key=_key))
+    return l.index(max(l, key=key))
+
+def imin(l, key=None):
+    '''Indexed max function
+    '''
+    return l.index(min(l, key=key))
+
 
 def count(firstval=0, step=1):
     '''start, start+step, start+2*step, ...
@@ -416,6 +422,13 @@ def interArrivalMtx (tryDic, relDic, dim=0):
     return sumMatrices ([sumTimeMtx(x, y, dim) for (x,y) in zip(tryDic, relDic)])
 
 
+def elem_from_list_dic(tDic, idx):
+    return map(lambda x: tDic[x][idx], tDic.keys())
+
+def first_and_last_thread(tDic):
+    tmax = imax(elem_from_list_dic(tDic, -1), key=op.itemgetter(1))
+    tmin = imin(elem_from_list_dic(tDic,  0), key=op.itemgetter(1))
+    return tDic.keys()[tmax], tDic.keys()[tmin]
 
 
 
@@ -434,13 +447,13 @@ def multi_analyze (tryDic, acqDic, relDic, namesVec, classL, overhead=0.0):
     nLocks = (max ([max (x, key=op.itemgetter(0)) for x in tryDic.values()], key=op.itemgetter(0)))[0] + 1
 
     # same serv time for all threads
-    #servTimeVec, _ = servTime (acqDic.values(), relDic.values(),dim=nLocks)
-    #cntTotalM = routingCntMtx(tryDic.values())
-    #sumInterArrivalTotalM = interArrivalMtx (tryDic.values(), relDic.values())
-    #r = np.maximum(cntTotalM, np.ones_like (cntTotalM))
-    #avgInterArrivalTotalM = np.divide (sumInterArrivalTotalM, r)
-    #rout = normalizeRowWise (cntTotalM)
-    #_, servTimes = insertIntermediateQs (rout, avgInterArrivalTotalM, servTimeVec)
+    servTimeVec, _ = servTime (acqDic.values(), relDic.values(),dim=nLocks)
+    cntTotalM = routingCntMtx(tryDic.values())
+    sumInterArrivalTotalM = interArrivalMtx (tryDic.values(), relDic.values())
+    r = np.maximum(cntTotalM, np.ones_like (cntTotalM))
+    avgInterArrivalTotalM = np.divide (sumInterArrivalTotalM, r)
+    rout = normalizeRowWise (cntTotalM)
+    _, servTimes = insertIntermediateQs (rout, avgInterArrivalTotalM, servTimeVec)
 
     for cl in classL:
         trySeqL = idx(cl, tryDic.values())
@@ -449,7 +462,6 @@ def multi_analyze (tryDic, acqDic, relDic, namesVec, classL, overhead=0.0):
         routCntL.append(routingCntMtx(trySeqL, nLocks))
         serv, servSq = servTime(acqSeqL, relSeqL, dim=nLocks)
         servTimeVecL.append(serv)
-        #servTimeSqVecL.append(servSq)
         wait, _ = servTime(trySeqL, relSeqL, dim=nLocks)
         waitTimeVecL.append(wait)
         r = np.maximum(routCntL[-1], np.ones_like (routCntL[-1]))

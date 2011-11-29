@@ -6,8 +6,7 @@ import numpy as np
 from numpy.linalg import solve
 from itertools import *
 
-
-logging.basicConfig(format="%(levelName)s:%(funcName)s: %(message)s", level=logging.DEBUG)
+logging.basicConfig(format="%(funcName)s: %(message)s", level=logging.DEBUG)
 
 # STANDARD MVA
 
@@ -94,6 +93,9 @@ def mva_multiclass(routL, servrates, nClassL, queueType, vr=None):
     else:
         e = np.array(map(solve_dtmc, routL))
 
+
+    print e
+
     #STEP 1: initialize the number of jobs matrices,
     # N and T are dictionaries of matrices, the keys are the pop.vectors
     # Rows are the different values for the classes, hence #rows == #queues
@@ -103,7 +105,7 @@ def mva_multiclass(routL, servrates, nClassL, queueType, vr=None):
     # NB: e has other interpretation of the dimensions: #rows = #classes
     T = {}
     N = {}
-    lam = {} 
+    lam = {}
     for k in all_popuV:
         T[k] = np.zeros((K,n_class))
         N[k] = np.zeros((K,n_class))
@@ -129,11 +131,14 @@ def mva_multiclass(routL, servrates, nClassL, queueType, vr=None):
                 # A_k is the sum of the service times of the jobs waiting at a server at
                 # the arrival of a new job
                 A_k = np.array([(N[dependentV(k, x)][i]*(1.0/servrates[i])).sum() for x in range(n_class)])
+                #print 'pop vec k:', (k,)
                 T[k][i] = (1.0/servrates[i] + A_k) # R_ck
-                                
+                #print 'A_k:', str(A_k)
+                #print 'servtime: %s' % str(1.0/servrates[i])
+
         #STEP 2.2
         # calculate throughput
-        # for each class/row, sum together expected time
+        # for each class/row, sum together expected time (which is visit ratio times waiting time)
         sum2 = np.diag(np.dot(e, T[k]))
         lam[k] = np.array(k)/sum2
         
@@ -141,7 +146,7 @@ def mva_multiclass(routL, servrates, nClassL, queueType, vr=None):
         # for each class and each server, update est. no. of
         # customers in server.
         N[k] = T[k]*lam[k]*e.T
-
+        
     # util.
     
     for i in range(K):
@@ -547,14 +552,12 @@ def solve_dtmc(p):
     I = np.identity(K)
     #substitute the last row in the transpose matrix of I-p with an array with ones
     # and try to solve that equation (normalize the ratios in the traffic equation)
-    q = np.ones(K)
     tmp = (I-p).T
-    r = np.vstack((tmp[:-1,:],q))
-
-    a = np.zeros(K) # Zero vector with the last element being 1.0
-    a[K-1] = 1.0
-    v = solve(r,a)
-    return v
+    r = np.vstack((tmp,np.ones(K)))
+    a = np.zeros(K+1) # Zero vector with the last element being 1.0
+    a[-1] = 1.0
+    sol = np.linalg.lstsq(r, a)[0]
+    return sol
 
 # all possible class pop. vectors, less than the list nClassL
 def getPopulationVs (nClassL):

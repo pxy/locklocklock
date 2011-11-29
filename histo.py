@@ -86,6 +86,9 @@ def variance (timeline):
 def timeLineSeq (startSeq, endSeq):
     return map (lambda (i,x): (x[1], endSeq[i][1] - x[1], x[0]), enumerate (startSeq))
 
+def timeLineInterSeq (startSeq, endSeq, tag):
+    return map (lambda (i,x): (x[1], x[1] - endSeq[i][1], tag, endSeq[i][0]), enumerate (startSeq[1:]))
+
 def timeLineSeq2 (startSeq, middleSeq, endSeq, tag):
     return map (lambda (i,x): (x[1], endSeq[i][1] - x[1], endSeq[i][1] - middleSeq[i][1], tag, x[0]), enumerate (startSeq))
 
@@ -315,18 +318,28 @@ def cnt_unfair (merged_tls, n_threads):
     return (fair, unfair)
     
 
+#def cov(intermeans, inters):
+#    n = len(inters)
+#    k = len(intermeans)
+#    cov = np.zeros((k,k))
+#    for (i,j) in ndenumerate(cov)
+#    for t, c in inters:
+#        cov[i,j] += t - intermeans[l]
+
+
+
             
-def gen_plot_wait_serv(path, name, _serv, est_wait, act_wait):
+def gen_plot_wait_serv(path, name, _serv, est_wait, act_wait, class_l):
 # each input is 
     serv = _serv.filled(0)
     w = csv.writer(open(path + os.sep + name + '.dat', 'w'), delimiter=' ', lineterminator='\n')
     
     w.writerow("# act_queue est_queue serv_t")
-    w.writerow("# class 0")
-    w.writerows(zip(act_wait[:,0] - serv[:,0], est_wait[:,0] - serv[:,0], serv[:,0]))
-    w.writerows(['',''])
-    w.writerow("# class 2")
-    w.writerows(zip(act_wait[:,2] - serv[:,2], est_wait[:,2] - serv[:,2], serv[:,2]))
+
+    for i in class_l:
+        w.writerow("# class %d" % i)
+        w.writerows(zip(act_wait[:,i] - serv[:,i], est_wait[:,i] - serv[:,i], serv[:,i]))
+        w.writerows(['',''])
     
     
 
