@@ -17,6 +17,16 @@ def count(firstval=0, step=1):
 def normalizeList(l, sumTo=1):
     return [ x/(sum(l)*1.0)*sumTo for x in l]
 
+def has_next(it):
+    # the pythonian way of peeking at an iterator
+    try:
+        first = it.next()
+    except StopIteration:
+        return False
+    else:
+        it = chain([first], iter)
+        return True
+
 
 def histogram (waitSeq, bucketSize):
 	arr = np.array(waitSeq)
@@ -78,10 +88,8 @@ def mysum(l):
         s2 += e * e
     return (s, s2)
 
-
 def variance (timeline):
     return mysum([x[2]] for x in timeline)
-
 
 def timeLineSeq (startSeq, endSeq):
     return map (lambda (i,x): (x[1], endSeq[i][1] - x[1], x[0]), enumerate (startSeq))
@@ -109,7 +117,6 @@ def printPartitionCount (lcl, size, start=-1, end=-1):
         for ct in cl[1]:
             histo[ct[0], i] = ct[1]
     return histo,lcl[0][0],lcl[-1][0]
-
 
 def setLength (l, _start, _end, bucketsize, val):
     begin = l[0][0]
@@ -145,20 +152,23 @@ def avgTimeLineSeq (timeLines, timestep, end=0, aggr=lambda tl: sum(zip(*tl)[1])
         onestep = list(takewhile(lambda x: x[0] < i, timeLine))
         timeLine = dropwhile(lambda x: x[0] < i, timeLine)
         ret.append((i, aggr(onestep)))
-        # the pythonian way of peeking at an iterator, i.e. hasnext()
-        try:
-            first = timeLine.next()
-        except StopIteration:
+        if not has_next(iter):
             break
-        else:
-            timeLine = chain([first], timeLine)
     return ret
 
-	
-
-
-
-
+# sorted_tl, list of arrival timestamps of locks
+def autocorr_lag_k (sorted_tl, bucket, lag, aggr=lambda tl: sum(zip(*tl)[1])/len(tl) if tl else 0):
+    start = endBucket(timeLine[0][0], timestep)
+    if end != 0:
+        timeLine = takewhile(lambda x: x[0] < end, timeLine)
+    ret = []
+    for i in count(start, timestep):
+        onestep = list(takewhile(lambda x: x[0] < i, timeLine))
+        timeLine = dropwhile(lambda x: x[0] < i, timeLine)
+        ret.append((i, aggr(onestep)))
+        if not has_next(iter):
+            break
+    return ret
 
 def waittimecorr(timelinesL, n):
     # use first timeline as pivot
@@ -175,12 +185,10 @@ def sliceoftimeline(timelines, start, dur):
     timelines_slice = mergeLists([list(dropwhile(lambda x: x[0] < start, takewhile(lambda x: x[0] < end, l))) for l in timelines])
     return partitionCount(timelines_slice, partitionStrategy=lambda x: x[4])
 
-
 def mergelists(lls):
     '''Flattens a list of lists.
     '''
     return [item for sublist in lls for item in sublist]
-
 
 def idx(idx):
     return op.itemgetter(idx)
@@ -247,8 +255,6 @@ def printTimeLine (timelines, timestep):
 
 def mean (l):
     return float(sum(l))/len(l)
-    
-    
 
 # create a list of bursts counts, consecutive lock accesses by
 # thread with idx1 after thread with idx0 has first tried to
@@ -276,11 +282,8 @@ def cntBursts (timelines, idx0, idx1):
                 mxidx = cntx1
     return sm, mxidx
 
-
-
 def timeline_id(tryD, acqD, relD, tid_l):
     return realtimeline(map (timeLineSeq3, tryD.values(), acqD.values(), relD.values(), tid_l))
-
 
 def cnt_unfair (merged_tls, n_threads):
     '''Counts the number of unfair lock handovers.

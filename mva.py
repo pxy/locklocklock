@@ -6,7 +6,7 @@ import numpy as np
 from numpy.linalg import solve
 from itertools import *
 
-logging.basicConfig(format="%(funcName)s: %(message)s", level=logging.DEBUG)
+
 
 # STANDARD MVA
 
@@ -80,8 +80,8 @@ def ld_mva(e, ld_mu, M):
 # MULTICLASS MVA
 
 #This function implements the mean value analysis for the multi-class closed network
-#    inputs: routL: routing matrix list
-#	 servrates: service rates for the queues for different job classes, should be a #queues x # classes matrix
+#    inputs: routL: routing matrix list, where each element in the list is a np.array
+#	 servrates: service rates for the queues for different job classes, should be a #queues x # classes np.array
 #	 nClassL: a list of the number of threads in each class, the length of the list is the number of classes
 def mva_multiclass(routL, servrates, nClassL, queueType, vr=None):
     #total number of queues and classes
@@ -92,9 +92,6 @@ def mva_multiclass(routL, servrates, nClassL, queueType, vr=None):
         e = vr
     else:
         e = np.array(map(solve_dtmc, routL))
-
-
-    print e
 
     #STEP 1: initialize the number of jobs matrices,
     # N and T are dictionaries of matrices, the keys are the pop.vectors
@@ -118,23 +115,18 @@ def mva_multiclass(routL, servrates, nClassL, queueType, vr=None):
         #STEP 2.1
         # calculate T
         for i in range(K): # queues
-
-            # if node i is an infinite server node, the response
-            # time is just the service time
+            # if node i is an infinite server node, the resp. time is just the serv. time
             if queueType[i] == 1:
                 T[k][i] =  1.0/servrates[i]
 
             # if node i is a single server queue
             else:
-                # T[k] is total service time for expected no.
-                # of cust waiting + new job
-                # A_k is the sum of the service times of the jobs waiting at a server at
+                # Arrival Theorem
+                # A_k is the sum of the serv. times of the jobs waiting at a server at
                 # the arrival of a new job
                 A_k = np.array([(N[dependentV(k, x)][i]*(1.0/servrates[i])).sum() for x in range(n_class)])
-                #print 'pop vec k:', (k,)
-                T[k][i] = (1.0/servrates[i] + A_k) # R_ck
-                #print 'A_k:', str(A_k)
-                #print 'servtime: %s' % str(1.0/servrates[i])
+                # service everyone in the queue, plus me
+                T[k][i] = (1.0/servrates[i] + A_k) 
 
         #STEP 2.2
         # calculate throughput
@@ -147,15 +139,8 @@ def mva_multiclass(routL, servrates, nClassL, queueType, vr=None):
         # customers in server.
         N[k] = T[k]*lam[k]*e.T
         
-    # util.
-    
-    for i in range(K):
-        # utilization is relative mean fraction of active servers, hence
-        # in the infinite server case utilization is always zero
-        if not queueType[i]:
-            U[i] = e[:,i]*lam[nClassL]/servrates[i]
     # ***END ALGO*** for loop over pop.vectors.
-    return  T[nClassL], N[nClassL], U
+    return  T[nClassL], N[nClassL]
 
 
 
@@ -421,7 +406,7 @@ def conv_ld_mu(serv_times, cust):
 # rout : list of routing mtcs
 # serv_times : matrix with load dependent serv rates per class
 # serv_times[class, q, load]
-def run_marie(rout, serv_times, n_cust, sched_oh):
+def run_marie(rout, serv_times, n_cust):
     #ld_mu_c0[server, load]
     #ld_mu_c0 = np.vstack ((serv_times, serv_times)).T
     #ld_mu_c0[0,1] = 2*ld_mu_c0[0,1]
@@ -433,22 +418,21 @@ def run_marie(rout, serv_times, n_cust, sched_oh):
 
     ld_mu_c0 = serv_times[0].copy()
     ld_mu_c1 = serv_times[1].copy()
+    ld_mu_c2 = serv_times[2].copy()
     
     old_ld_mu_c0 = np.zeros_like(ld_mu_c0)
     old_ld_mu_c1 = np.zeros_like(ld_mu_c1)
+    old_ld_mu_c2 = np.zeros_like(ld_mu_c2)
     print 1/ld_mu_c0/2.27
-    print 1/ld_mu_c1/2.27
     cnt = 0
 
     e = solve_dtmc(rout[0])
-    lam_r = 1./sched_oh
+    #lam_r = 1./sched_oh
     while (not (mtx_eq(old_ld_mu_c0, ld_mu_c0, 0.00001*np.max(ld_mu_c0)) and mtx_eq(old_ld_mu_c1, ld_mu_c1, 0.00001*np.max(ld_mu_c1)))):
         T0,_,marg_p_c0 = ld_mva(e, ld_mu_c0, n_cust)
         T1,_,marg_p_c1 = ld_mva(e, ld_mu_c1, n_cust)
+        T2,_,marg_p_c2 = ld_mva(e, ld_mu_c2, n_cust)
 
-
-        print T0
-        print T1
 
         if conv_cond0(marg_p_c0, 0.01):
             print "cond0"
@@ -458,61 +442,48 @@ def run_marie(rout, serv_times, n_cust, sched_oh):
         ld_lam_c0 = rel5(ld_mu_c0[1], marg_p_c0[1])
         ld_lam_c1 = rel5(ld_mu_c1[1], marg_p_c1[1])
         ld_lam = np.array([ld_lam_c0, ld_lam_c1])
-        print ld_lam
-        
+
+
         #mc = gen_mc(ld_lam_c0, lam_r, serv_times[1])
-        mc = gen_mc2(ld_lam, lam_r, fix_mu)
-        emc= gen_emc(ld_lam, lam_r, fix_mu)
-        emc_steady = solve_dtmc(emc)
+        #mc = gen_mc2(ld_lam, lam_r, fix_mu)
+#        emc= gen_emc(ld_lam, lam_r, fix_mu)
+#        emc_steady = solve_dtmc(emc)
         mc_steady = solve_ctmc(mc)
 
 
 
-        mc2 = mc-np.diag(mc)*np.identity(mc.shape[0])
-        _H = mc2.sum(axis=1)
-        _H[5] = (1./lam_r)*ld_lam[0,0]
-        _H[6] = (1./lam_r)*ld_lam[1,0]
-        H = 1./_H
+#        mc2 = mc-np.diag(mc)*np.identity(mc.shape[0])
+#        _H = mc2.sum(axis=1)
+#        _H[5] = (1./lam_r)*ld_lam[0,0]
+#        _H[6] = (1./lam_r)*ld_lam[1,0]
+#        H = 1./_H
+#        hm = emc_steady*H
+#        hmtot = hm.sum()
+#        steadystate = hm/hmtot
 
-        print H
-
-        print emc_steady
-        hm = emc_steady*H
-        print hm
-        hmtot = hm.sum()
-        print hmtot
-        steadystate = hm/hmtot
-        print "SS: ", steadystate
-        mc_steady = solve_ctmc(mc)
-        print retrial_margp_c(mc_steady)
+#        print retrial_margp_c(mc_steady)
         #mc, filt = gen_mc3(np.array([ld_lam_c0,ld_lam_c1]), lam_r, fix_mu)
 
         #return mc, np.array([ld_lam_c0, ld_lam_c1])
 
-        #steadystate = solve_ctmc(mc)
-        #print steadystate
         #loc_marg_p = retrial_margp_c2(steadystate, filt)
-        loc_marg_p = retrial_margp_c(steadystate)
-        #loc_marg_p = retrial_margp(steadystate)
-        print loc_marg_p
+        #loc_marg_p = retrial_margp_c(steadystate)
+        loc_marg_p = retrial_margp(steadystate)
 
         cond_thr_c0 = rel3(ld_lam_c0, loc_marg_p[0])
         cond_thr_c1 = rel3(ld_lam_c1, loc_marg_p[1])
+        
 
         old_ld_mu_c0 = ld_mu_c0.copy()
         old_ld_mu_c1 = ld_mu_c1.copy()
+        old_ld_mu_c2 = ld_mu_c2.copy()
         ld_mu_c0[1] = cond_thr_c0
         ld_mu_c1[1] = cond_thr_c1
-
-        #print ld_mu_c0
-        #print ld_mu_c1
-
-    print "exiting:"
-    print 1/ld_mu_c0
-    print 1/ld_mu_c1
+        ld_mu_c1[1] = cond_thr_c1
 
     print ld_mva(e, ld_mu_c0, n_cust)
     print ld_mva(e, ld_mu_c1, n_cust)
+
     return ld_mu_c0, ld_mu_c1
 
 
@@ -673,3 +644,15 @@ def mva_dsa_multiclass(routL, servrates, nClassL, queueType, vr=None):
 
     print "iterations: ", cnt
     return  T, N, Unew
+
+
+def test_case11():
+    qType = [0,0,0,0,0,1] #the local computation is an infinite server
+    cusT = (10,6)
+    rout1 = np.array([[0,1,0,0,0,0],[0,0,0.7,0.3,0,0],[0,0,0,0,0.3,0.7],[0,1,0,0,0,0],[0,0,1,0,0,0],[1,0,0,0,0,0]])
+    rout2 = np.array([[0,1,0,0,0,0],[0,0,0.8,0.2,0,0],[0,0,0,0,0.3,0.7],[0,1,0,0,0,0],[0,0,1,0,0,0],[1,0,0,0,0,0]])
+    servrates = np.array([[0.5,0.5],[1,1],[1,1],[1,1],[1,1],[0.1,10000000]])
+    e = np.array([[8,2,2,2,2,1],[20,2,4,6,8,1]])
+    T, N = mva_multiclass([rout1,rout2], servrates, cusT, qType, vr=e)
+    print "total_waiting:", T
+
