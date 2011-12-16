@@ -1,5 +1,5 @@
 """SLAP-
-$ Time-stamp: <2011-12-16 16:41:22 jonatanlinden>
+$ Time-stamp: <2011-12-16 16:55:16 jonatanlinden>
 
 README:
 A collection of tools to do a queueing network analysis on sequences
@@ -86,7 +86,7 @@ class LockTrace:
 
 
 def tl_serv (startSeq, middleSeq, endSeq, tag):
-    return map (lambda (i,x): (x[1], endSeq[i][1] - x[1], tag, x[0]), enumerate (startSeq))
+    return map (lambda (i,x): (x[1], endSeq[i][1] - middleSeq[i][1], tag, x[0]), enumerate (startSeq))
 
 # interarrival time timeline.
 def tl_inter (startSeq, middleSeq, endSeq, tag):
@@ -165,10 +165,8 @@ def corr_lag_k2 (tl0, tl1, timestep, lag):
     mean0 = len(tl02)/steps
     mean1 = len(tl12)/steps
 
-    ret0 = []
-    ret1 = []
-    timeLine0 = tl02
-    timeLine1 = tl12
+    ret0, ret1 = [],[]
+    timeLine0,timeLine1 = tl02,tl12
     for i in range(start, end + 1, timestep):
 
         timeLine0,cnt = drop2(timeLine0, i+timestep).next()
@@ -182,10 +180,7 @@ def corr_lag_k2 (tl0, tl1, timestep, lag):
         #timeLine1 = interval(timeLine1, start=i)
         timeLine1 = list(interval(timeLine1, start=i))
 
-    corr = 0
-    variance0 = 0
-    variance1 = 0
-
+    corr, var0, var1 = 0, 0, 0
     # the inital part of the sequences should be taken into account when calc. abs. variance
     for i in range(lag):
         variance0 += math.pow(ret0[i] - mean0, 2.0)
