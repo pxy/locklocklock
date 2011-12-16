@@ -27,14 +27,16 @@ def has_next(it):
         it = chain([first], iter)
         return True
 
-
 def histogram (waitSeq, bucketSize):
-	arr = np.array(waitSeq)
-	ma = np.amax (arr)
-	print ma
-	numBs = ma / bucketSize + 1
-	hi = numBs * bucketSize
-	return np.histogram (arr, bins=numBs, range=(0,hi))
+    '''Creates a histogram where each bar represent an interval of bucketsize.
+    Always starts at 0.
+    '''
+    arr = np.array(waitSeq)
+    ma = np.amax (arr)
+    print ma
+    numBs = ma / bucketSize + 1
+    hi = numBs * bucketSize
+    return np.histogram (arr, bins=numBs, range=(0,hi))
 
 def prunehisto (nparr):
 	if nparr.shape[0] <= 600:
@@ -51,10 +53,6 @@ def histos (acqLockSeq, relLockSeq, bs):
 	lockDict = collapseLevel (waitingTimes)
 	return map (lambda (id,l): (id, prunehisto(histogram (l, bs)[0])), lockDict.iteritems())
 
-def writeHistos (histList, path):
-	for (lid, hist) in histList:
-		fd = open (path + os.sep + str(lid) + ".dat", 'w')
-		hist.tofile(fd, sep='\n', format="%d")
 
 def writeHisto (hist, name, path):
 	fd = open (path + os.sep + name + ".dat", 'w')
@@ -66,7 +64,7 @@ def writeHisto2 (hist, name, path):
 	fd.write ('# ' + name + '\n')
 	np.savetxt(fd, hist, delimiter=' ', fmt='%d')
 
-def writeResult (name, path, data):
+def write_result (data, name, path):
 	w = csv.writer(open(path + os.sep + name + '.dat', 'w'), delimiter=' ', lineterminator='\n')
 	w.writerows(data)
 
@@ -103,7 +101,8 @@ def timeLineSeq2 (startSeq, middleSeq, endSeq, tag):
 def timeLineSeq3 (startSeq, middleSeq, endSeq, tag):
     return map (lambda (i,x): (x[1], middleSeq[i][1],endSeq[i][1], tag, x[0]), enumerate (startSeq))
 
-def partitionCount (tl, partitionStrategy=lambda x: x[1]):
+# create histogram by counting
+def partition_cnt (tl, partitionStrategy=lambda x: x[1]):
     tl2 = sorted(tl, key=partitionStrategy)
     counts = []
     subgroup = groupby(tl2, key=partitionStrategy)
@@ -140,6 +139,7 @@ def endBucket (val, bucketsize):
     return int (bucketsize * math.ceil (float(val)/bucketsize))
 
 
+# turn any timeline into a histogram
 def avgTimeLineSeq (timeLines, timestep, end=0, aggr=lambda tl: sum(zip(*tl)[1])/len(tl) if tl else 0):
     timeLine = sorted(timeLines)
     start = endBucket(timeLine[0][0], timestep)
@@ -152,30 +152,20 @@ def avgTimeLineSeq (timeLines, timestep, end=0, aggr=lambda tl: sum(zip(*tl)[1])
         onestep = list(takewhile(lambda x: x[0] < i, timeLine))
         timeLine = dropwhile(lambda x: x[0] < i, timeLine)
         ret.append((i, aggr(onestep)))
-        if not has_next(iter):
+        # the pythonian way of peeking at an iterator
+        try:
+            first = timeLine.next()
+        except StopIteration:
             break
+        else:
+            timeLine = chain([first], timeLine)
+
     return ret
 
-# sorted_tl, list of arrival timestamps of locks
-def autocorr_lag_k (sorted_tl, bucket, lag, aggr=lambda tl: sum(zip(*tl)[1])/len(tl) if tl else 0):
-    start = endBucket(timeLine[0][0], timestep)
-    if end != 0:
-        timeLine = takewhile(lambda x: x[0] < end, timeLine)
-    ret = []
-    for i in count(start, timestep):
-        onestep = list(takewhile(lambda x: x[0] < i, timeLine))
-        timeLine = dropwhile(lambda x: x[0] < i, timeLine)
-        ret.append((i, aggr(onestep)))
-        if not has_next(iter):
-            break
-    return ret
 
 def waittimecorr(timelinesL, n):
     # use first timeline as pivot
-
     timelinesSorted = [sorted(l, key=lambda x: x[1], reverse=True) for l in timelinesL]
-
-    
     onetime = sorted(chain(*[islice(l, n) for l in timelinesSorted]))
     return onetime
 

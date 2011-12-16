@@ -1,5 +1,5 @@
 """SLAP-
-$ Time-stamp: <2011-12-15 15:19:01 jonatanlinden>
+$ Time-stamp: <2011-12-16 16:41:22 jonatanlinden>
 
 README:
 A collection of tools to do a queueing network analysis on sequences
@@ -26,22 +26,13 @@ logging.basicConfig(format="%(funcName)s: %(message)s", level=logging.DEBUG)
 def enum(**enums):
     return type('Enum', (), enums)
 
-def has_next(it):
-    # the pythonian way of peeking at an iterator
-    try:
-        first = it.next()
-    except StopIteration:
-        return False
-    else:
-        it = chain([first], iter)
-        return True
+timelines = enum(WAIT=1, QUEUE=2, SERV=3, INTER=4)
 
 def startBucket (val, bucketsize):
     return int(bucketsize * math.floor(float(val)/bucketsize))
 
 def endBucket (val, bucketsize):
     return int (bucketsize * math.ceil (float(val)/bucketsize))
-
 
 # OBJECT
 
@@ -51,10 +42,10 @@ class LockTrace:
         (self.tryD, self.acqD, self.relD, self.namesD) = parseDicTuple(path)
 
     def start_ts(self):
-        return elem_from_list_dic(self.tryD, 0)
+        return zip(*elem_from_list_dic(self.tryD, 0))[1]
 
     def end_ts(self):
-        return elem_from_list_dic(self.tryD, -1)
+        return zip(*elem_from_list_dic(self.tryD, -1))[1]
 
     def delete_thread(self, pos_idx):
         key = self.tryD.keys()[pos_idx]
@@ -69,50 +60,40 @@ class LockTrace:
     def analyze(self):
         if self.classes:
             res_tmp = multi_analyze(self.tryD, self.acqD, self.relD, self.namesD, self.classes)
-            (self.rout_l, self.serv_rates, self.q_type, self.wait_t) = (res_tmp[0], res_tmp[1], res_tmp[3], res_tmp[4])
-
+            (self.rout_l, self.serv_rates, self.q_type, self.meas_wait) = (res_tmp[0], res_tmp[1], res_tmp[3], res_tmp[4])
         else:
             print "Classes undefined"
 
     def mva(self):
         if not self.rout_l:
-            analyse(self)
-        res_tmp = multiclass_mva(self.rout_l, self.serv_rates, tuple(map(len, self.classes)), self.q_type)
-        self.T = res_tmp[0]
-        self.N = res_tmp[1]
-        return self.T[1::2]
+            analyze(self)
+        res_tmp = mva_multiclass(self.rout_l, self.serv_rates, tuple(map(len, self.classes)), self.q_type)
+        self.est_wait = res_tmp[0][1::2]
+        self.est_qlen = res_tmp[1][1::2]
 
-    def wait(self, cls):
-        if self.T:
-            return zip(T[:,cls][1::2],1/self.serv_rates[:,cls][1::2], self.wait_t[:,cls])
 
-    timelines = enum(WAIT=1, QUEUE=2, SERV=3, INTER=4)
-
-    def time_line (trace, kind, use_class=False):
+    def time_line (self, kind, use_class=False):
         if   kind == timelines.INTER:
             f = tl_inter
         elif kind == timelines.SERV:
             f = tl_serv
             
-        tls = map (f, trace.tryD.values(), trace.acqD.values(), trace.relD.values(), trace.tryD.keys())
-        if use_class and trace.classes:
-            return [sorted(merge_lists(idx(cl, tls))) for cl in trace.classes]
+        tls = map (f, self.tryD.values(), self.acqD.values(), self.relD.values(), self.tryD.keys())
+        if use_class and self.classes:
+            return [sorted(merge_lists(idx(cl, tls))) for cl in self.classes]
         else:
             return sorted(merge_lists(tls))
 
 
-    
+def tl_serv (startSeq, middleSeq, endSeq, tag):
+    return map (lambda (i,x): (x[1], endSeq[i][1] - x[1], tag, x[0]), enumerate (startSeq))
 
-    def tl_serv (startSeq, middleSeq, endSeq, tag):
-        return map (lambda (i,x): (x[1], endSeq[i][1] - x[1], tag, x[0]), enumerate (startSeq))
-
-    def tl_inter (startSeq, middleSeq, endSeq, tag):
-        return map (lambda (i,x): (x[1], x[1] - endSeq[i][1], tag, endSeq[i][0], x[0]), enumerate (startSeq[1:]))
+# interarrival time timeline.
+def tl_inter (startSeq, middleSeq, endSeq, tag):
+    return map (lambda (i,x): (x[1], x[1] - endSeq[i][1], tag, endSeq[i][0], x[0]), enumerate (startSeq[1:]))
 
 #def visitratio (lt):
     # pick the reference queue
-    
-
 
 # sorted_tl, list of arrival timestamps of locks for one specific lock according to timeslines.INTER
 def autocorr_lag_k (tl, timestep, lag):
@@ -156,7 +137,7 @@ def interval(tl, start=None, end=None):
         tl = dropwhile(lambda x: x[0] < start, tl)
     return tl
 
-def dropwhile(predicate, iterable):
+def drop2(predicate, iterable):
     # dropwhile(lambda x: x<5, [1,4,6,4,1]) --> [(6,2), 4,1]
     iterable = iter(iterable)
     cnt = 0

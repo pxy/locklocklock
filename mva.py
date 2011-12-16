@@ -646,6 +646,7 @@ def mva_dsa_multiclass(routL, servrates, nClassL, queueType, vr=None):
     return  T, N, Unew
 
 
+
 def test_case11():
     qType = [0,0,0,0,0,1] #the local computation is an infinite server
     cusT = (10,6)
