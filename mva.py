@@ -3,6 +3,7 @@
 import os,sys,math,logging
 import operator as op
 import numpy as np
+import numpy.ma as ma
 from numpy.linalg import solve
 from itertools import *
 
@@ -113,10 +114,9 @@ def mva_multiclass(routL, servrates, nClassL, queueType, vr=None):
     N = {}
     lam = {}
     for k in all_population_vectors:
-        T[k] = np.zeros((K,n_class))
-        N[k] = np.zeros((K,n_class))
-        lam[k] = np.zeros(n_class)
-
+        T[k] = ma.zeros((K,n_class))
+        N[k] = ma.zeros((K,n_class))
+        lam[k] = ma.zeros(n_class)
 
     # some constants
     mx_id  = np.eye(n_class)
@@ -154,7 +154,6 @@ def mva_multiclass(routL, servrates, nClassL, queueType, vr=None):
 
     # ***END ALGO*** for loop over pop.vectors.
     return  T[nClassL], N[nClassL]
-
 
 
 # ****************************** MARIE'S METHOD ********************************

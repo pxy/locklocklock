@@ -1,5 +1,5 @@
 """SLAP-
-$ Time-stamp: <2012-01-09 13:27:43 jonatanlinden>
+$ Time-stamp: <2012-01-12 10:19:41 jonatanlinden>
 
 README:
 A collection of tools to do a queueing network analysis on sequences
@@ -65,7 +65,7 @@ class LockTrace:
             print "Classes undefined"
 
     def serv_times(self):
-        if self.serv_rates:
+        if self.serv_rates != None:
             return 1/self.serv_rates[1::2]
         else:
             return None
@@ -98,8 +98,8 @@ class LockTrace:
         return map (lambda (i,x): (x[1], x[1] - endSeq[i][1], tag, endSeq[i][0], x[0]), enumerate (startSeq[1:]))
 
 
-def split_tl(tl, chunks):
-    timestep = (tl[-1][0] - tl[0][0])/chunks
+def split_tl(tl, n_chunks):
+    timestep = (tl[-1][0] - tl[0][0])/n_chunks
     tls = []
     for i in range(tl[0][0]+timestep, tl[-1][0] + 1, timestep):
         prefix, tl = split(lambda x: x[0] < i, tl)
