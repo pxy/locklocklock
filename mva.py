@@ -85,13 +85,22 @@ def ld_mva(e, ld_mu, M):
 #	 nClassL: a list of the number of threads in each class, the length of the list is the number of classes
 def mva_multiclass(routL, servrates, nClassL, queueType, vr=None):
     #total number of queues and classes
+
     K = len(queueType)
     n_class = len(routL)
-    all_popuV = getPopulationVs(nClassL)
+
+    q_type = np.array(queueType)
+
+    all_population_vectors = getPopulationVs(nClassL)
+
+    # allow setting visit ratio's directly
     if vr != None:
         e = vr
     else:
         e = np.array(map(solve_dtmc, routL))
+
+    # we only use service times, not service rates
+    serv_t = 1.0/servrates
 
     #STEP 1: initialize the number of jobs matrices,
     # N and T are dictionaries of matrices, the keys are the pop.vectors
@@ -103,45 +112,48 @@ def mva_multiclass(routL, servrates, nClassL, queueType, vr=None):
     T = {}
     N = {}
     lam = {}
-    for k in all_popuV:
+    for k in all_population_vectors:
         T[k] = np.zeros((K,n_class))
         N[k] = np.zeros((K,n_class))
         lam[k] = np.zeros(n_class)
 
-    U = np.zeros((K, n_class))
-    # ***BEGIN ALGO***
 
-    for k in all_popuV:
+    # some constants
+    mx_id  = np.eye(n_class)
+    mx_nul = np.zeros((n_class,n_class))
+
+    # *** BEGIN ALGO ***
+    for k in all_population_vectors:
         #STEP 2.1
-        # calculate T
-        for i in range(K): # queues
-            # if node i is an infinite server node, the resp. time is just the serv. time
-            if queueType[i] == 1:
-                T[k][i] =  1.0/servrates[i]
 
-            # if node i is a single server queue
-            else:
-                # Arrival Theorem
-                # A_k is the sum of the serv. times of the jobs waiting at a server at
-                # the arrival of a new job
-                A_k = np.array([(N[dependentV(k, x)][i]*(1.0/servrates[i])).sum() for x in range(n_class)])
-                # service everyone in the queue, plus me
-                T[k][i] = (1.0/servrates[i] + A_k) 
+        # IF node i is an INFINITE server node, the resp. time is just the serv. time
+        T[k][q_type == 1] = serv_t[q_type == 1]
+        
+        # ELSE IF node i is a SINGLE server queue
+        # A_k is the sum of the serv. times of the jobs waiting at a server at
+        # the time of arrival of a new job
+        # we get the number of jobs waiting at a server from dependent population vectors, as defined by:
+        idx_lst = np.maximum(np.array(list(k)) - mx_id, mx_nul)
+
+        A_k = np.array([(N[tuple(idx_lst[x])][q_type==0]*serv_t[q_type == 0]).sum(axis=1) for x in range(n_class)])
+
+        # service everyone in the queue, plus me
+        T[k][q_type == 0] = (serv_t[q_type == 0] + A_k.T) 
+
+        # END IF
 
         #STEP 2.2
         # calculate throughput
         # for each class/row, sum together expected time (which is visit ratio times waiting time)
-        sum2 = np.diag(np.dot(e, T[k]))
-        lam[k] = np.array(k)/sum2
+        sum_exp = np.diag(np.dot(e, T[k]))
+        lam[k] = np.array(k)/sum_exp
         
         #STEP 2.3
-        # for each class and each server, update est. no. of
-        # customers in server.
+        # for each class and each server, update estimated number of customers in server.
         N[k] = T[k]*lam[k]*e.T
-        
+
     # ***END ALGO*** for loop over pop.vectors.
     return  T[nClassL], N[nClassL]
-
 
 
 
@@ -545,6 +557,12 @@ def dependentV(tup, c):
     res[res<0] = 0
     return tuple(res)
 
+# dependentV for all classes, as a list
+def deps(tup):
+    
+
+    return tuple(res)
+    
 def factorial(n):
     if not n >= 0:
         raise ValueError("n must be >= 0")
@@ -621,6 +639,13 @@ def mva_dsa_multiclass(routL, servrates, nClassL, queueType, vr=None):
     while not (np.alltrue(np.absolute(U - Unew) < 0.0001) or cnt > 4):
         U = np.copy(Unew)
         print "U: ", U
+
+
+
+
+
+
+
         # solve for scale factors
 
         # sum row wise

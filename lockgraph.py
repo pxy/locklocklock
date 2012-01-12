@@ -1,5 +1,5 @@
 """SLAP-
-$ Time-stamp: <2011-12-16 16:55:16 jonatanlinden>
+$ Time-stamp: <2012-01-09 13:27:43 jonatanlinden>
 
 README:
 A collection of tools to do a queueing network analysis on sequences
@@ -64,19 +64,24 @@ class LockTrace:
         else:
             print "Classes undefined"
 
+    def serv_times(self):
+        if self.serv_rates:
+            return 1/self.serv_rates[1::2]
+        else:
+            return None
+
     def mva(self):
         if not self.rout_l:
-            analyze(self)
+            self.analyze(self)
         res_tmp = mva_multiclass(self.rout_l, self.serv_rates, tuple(map(len, self.classes)), self.q_type)
         self.est_wait = res_tmp[0][1::2]
         self.est_qlen = res_tmp[1][1::2]
 
-
     def time_line (self, kind, use_class=False):
         if   kind == timelines.INTER:
-            f = tl_inter
+            f = self.tl_inter
         elif kind == timelines.SERV:
-            f = tl_serv
+            f = self.tl_serv
             
         tls = map (f, self.tryD.values(), self.acqD.values(), self.relD.values(), self.tryD.keys())
         if use_class and self.classes:
@@ -85,48 +90,47 @@ class LockTrace:
             return sorted(merge_lists(tls))
 
 
-def tl_serv (startSeq, middleSeq, endSeq, tag):
-    return map (lambda (i,x): (x[1], endSeq[i][1] - middleSeq[i][1], tag, x[0]), enumerate (startSeq))
+    def tl_serv (self, startSeq, middleSeq, endSeq, tag):
+        return map (lambda (i,x): (x[1], endSeq[i][1] - middleSeq[i][1], tag, x[0]), enumerate (startSeq))
 
-# interarrival time timeline.
-def tl_inter (startSeq, middleSeq, endSeq, tag):
-    return map (lambda (i,x): (x[1], x[1] - endSeq[i][1], tag, endSeq[i][0], x[0]), enumerate (startSeq[1:]))
+    # interarrival time timeline.
+    def tl_inter (self, startSeq, middleSeq, endSeq, tag):
+        return map (lambda (i,x): (x[1], x[1] - endSeq[i][1], tag, endSeq[i][0], x[0]), enumerate (startSeq[1:]))
+
+
+def split_tl(tl, chunks):
+    timestep = (tl[-1][0] - tl[0][0])/chunks
+    tls = []
+    for i in range(tl[0][0]+timestep, tl[-1][0] + 1, timestep):
+        prefix, tl = split(lambda x: x[0] < i, tl)
+        tls.append(prefix)
+    return tls
+
+
+def keep_ts_in_range(tryDict,acqDict,relDict,start_ts,end_ts):
+    newRelDict = {}
+    newTryDict = {}
+    newAcqDict = {}
+    for k,v in relDict.iteritems(): #v is a list of the tuple (lockid,timstamp)
+        newRelDict[k] = []
+        newTryDict[k] = []
+        newAcqDict[k] = []
+        i = 0
+        for t in v:
+            if t[1] >= start_ts and t[1] <= end_ts: #the tuple index starts from 0, if the timestamp falls in the rage
+                newRelDict[k].append(t)
+                newTryDict[k].append(tryDict[k][i])
+                newAcqDict[k].append(acqDict[k][i])
+            i = i + 1	
+        if newTryDict[k] == [] or newAcqDict[k] == [] or newRelDict[k] == []:
+            del newTryDict[k]
+            del newAcqDict[k]
+            del newRelDict[k]
+    return (newTryDict,newAcqDict,newRelDict)
+
 
 #def visitratio (lt):
     # pick the reference queue
-
-# sorted_tl, list of arrival timestamps of locks for one specific lock according to timeslines.INTER
-def autocorr_lag_k (tl, timestep, lag):
-    start = endBucket(tl[0][0], timestep)
-    mean = len(tl)/((tl[-1][0] - tl[0][0])/timestep)
-    ret = []
-    timeLine = tl
-    for i in count(start, timestep):
-        onestep = list(takewhile(lambda x: x[0] < i, timeLine))
-        timeLine = dropwhile(lambda x: x[0] < i, timeLine)
-        ret.append(len(onestep))
-            # the pythonian way of peeking at an iterator
-        try:
-            first = timeLine.next()
-        except StopIteration:
-            break
-        else:
-            timeLine = chain([first], timeLine)
-
-    corr = 0
-    variance = 0
-
-    for i in range(lag):
-        variance += math.pow(ret[i] - mean, 2.0)
-        
-    for i in range(lag, len(ret)):
-        corr += (ret[i - lag] - mean)*(ret[i] - mean)
-        variance += math.pow(ret[i] - mean, 2.0)
-        
-    corr /= len(ret) - lag
-    variance /= len(ret)
-
-    return mean, corr/variance
 
 def interval(tl, start=None, end=None):
     if not (start or end):
@@ -137,17 +141,18 @@ def interval(tl, start=None, end=None):
         tl = dropwhile(lambda x: x[0] < start, tl)
     return tl
 
-def drop2(predicate, iterable):
-    # dropwhile(lambda x: x<5, [1,4,6,4,1]) --> [(6,2), 4,1]
+def split(predicate, iterable):
+    # dropwhile(lambda x: x<5, [1,4,6,4,1]) --> ([1,4],[6,4,1])
     iterable = iter(iterable)
-    cnt = 0
+    prefix = []
+    tail = iter([])
     for x in iterable:
-        cnt += 1
-        if not predicate(x):
-            yield (x, cnt)
+        if predicate(x):
+            prefix.append(x)
+        else:
+            tail = chain([x], iterable)
             break
-    for x in iterable:
-        yield x
+    return prefix, tail
 
 # the same as before, but this time describes the relation between two groups of timestamps
 def corr_lag_k2 (tl0, tl1, timestep, lag):
@@ -169,37 +174,38 @@ def corr_lag_k2 (tl0, tl1, timestep, lag):
     timeLine0,timeLine1 = tl02,tl12
     for i in range(start, end + 1, timestep):
 
-        timeLine0,cnt = drop2(timeLine0, i+timestep).next()
-
+        prefix0, timeLine0 = split(lambda x: x[0] < i, timeLine0)
+        ret0.append(len(prefix0))
         #not working correctly if iterator is not evaluated at each step
         #timeLine0 = interval(timeLine0, start=i)
-        timeLine0 = list(interval(timeLine0, start=i))
-        
-        ret1.append(len(list(interval(timeLine1, end=i+timestep))))
+        #timeLine0 = list(interval(timeLine0, start=i))
+        prefix1, timeLine1 = split(lambda x: x[0] < i, timeLine1)
+        ret1.append(len(prefix1))
+        #ret1.append(len(list(interval(timeLine1, end=i+timestep))))
         #not working correctly if iterator is not evaluated at each step
         #timeLine1 = interval(timeLine1, start=i)
-        timeLine1 = list(interval(timeLine1, start=i))
+        #timeLine1 = list(interval(timeLine1, start=i))
 
     corr, var0, var1 = 0, 0, 0
     # the inital part of the sequences should be taken into account when calc. abs. variance
     for i in range(lag):
-        variance0 += math.pow(ret0[i] - mean0, 2.0)
-        variance1 += math.pow(ret1[i] - mean1, 2.0)
+        var0 += math.pow(ret0[i] - mean0, 2.0)
+        var1 += math.pow(ret1[i] - mean1, 2.0)
         
     for i in range(lag, len(ret0)):
         # this defines correlation between arrival of t0 and an arrival of
         # sequence t1 lag*timestep timeunits later
         corr += (ret0[i - lag] - mean0)*(ret1[i] - mean1)
-        variance0 += math.pow(ret0[i] - mean0, 2.0)
-        variance1 += math.pow(ret1[i] - mean1, 2.0)
+        var0 += math.pow(ret0[i] - mean0, 2.0)
+        var1 += math.pow(ret1[i] - mean1, 2.0)
 
     # get means over appropriate sequences
     corr /= len(ret0) - lag 
-    variance0 /= len(ret0)
-    variance1 /= len(ret1)
+    var0 /= len(ret0)
+    var1 /= len(ret1)
 
     # the joint variance defined through the streams std. dev.
-    vari = math.sqrt(variance0*variance1) 
+    vari = math.sqrt(var0*var1) 
     
     
     return corr/vari # normalised according to the absolute variance
@@ -805,6 +811,7 @@ def parseInstrList (instrFile):
     for _row in recReader:
         res.append(regex.search(_row[2]).group('hexaddr'))
     return res
+
 
 
 

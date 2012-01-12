@@ -180,8 +180,6 @@ def mergelists(lls):
     '''
     return [item for sublist in lls for item in sublist]
 
-def idx(idx):
-    return op.itemgetter(idx)
     
 class bcolors:
     TRY = '\033[95m'
@@ -294,7 +292,6 @@ def cnt_unfair (merged_tls, n_threads):
 
         lids[i] = l
         # if we have grabbed the lock
-
         if cnts[i] == 2:
             # was it fair or not?
             if l in last and last[l] == i and sum(wl == l for wl in lids) > 1:
@@ -311,17 +308,6 @@ def cnt_unfair (merged_tls, n_threads):
     return (fair, unfair)
     
 
-#def cov(intermeans, inters):
-#    n = len(inters)
-#    k = len(intermeans)
-#    cov = np.zeros((k,k))
-#    for (i,j) in ndenumerate(cov)
-#    for t, c in inters:
-#        cov[i,j] += t - intermeans[l]
-
-
-
-            
 def gen_plot_wait_serv(path, name, _serv, est_wait, act_wait, class_l):
 # each input is 
     serv = _serv.filled(0)
