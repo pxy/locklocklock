@@ -86,9 +86,7 @@ def ld_mva(e, ld_mu, M):
 #	 nClassL: a list of the number of threads in each class, the length of the list is the number of classes
 def mva_multiclass(routL, servrates, nClassL, queueType, vr=None):
     #total number of queues and classes
-
-    K = len(queueType)
-    n_class = len(routL)
+    (K, n_class) = servrates.shape
 
     q_type = np.array(queueType)
 
@@ -98,7 +96,7 @@ def mva_multiclass(routL, servrates, nClassL, queueType, vr=None):
     if vr != None:
         e = vr
     else:
-        e = np.array(map(solve_dtmc, routL))
+        e = ma.array(map(solve_dtmc, routL))
 
     # we only use service times, not service rates
     serv_t = 1.0/servrates
@@ -126,7 +124,7 @@ def mva_multiclass(routL, servrates, nClassL, queueType, vr=None):
     for k in all_population_vectors:
         #STEP 2.1
 
-        # IF node i is an INFINITE server node, the resp. time is just the serv. time
+        # IF node i is an INFINITE server node, the wait time is just the serv. time
         T[k][q_type == 1] = serv_t[q_type == 1]
         
         # ELSE IF node i is a SINGLE server queue
@@ -153,7 +151,7 @@ def mva_multiclass(routL, servrates, nClassL, queueType, vr=None):
         N[k] = T[k]*lam[k]*e.T
 
     # ***END ALGO*** for loop over pop.vectors.
-    return  T[nClassL], N[nClassL]
+    return  T[nClassL], N[nClassL], lam[nClassL]*e.T
 
 
 # ****************************** MARIE'S METHOD ********************************

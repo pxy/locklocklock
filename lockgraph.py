@@ -1,5 +1,5 @@
 """SLAP-
-$ Time-stamp: <2012-01-12 10:19:41 jonatanlinden>
+$ Time-stamp: <2012-01-16 18:59:16 jonatanlinden>
 
 README:
 A collection of tools to do a queueing network analysis on sequences
@@ -17,7 +17,10 @@ import operator as op
 from mva import st_mva, mva_multiclass
 import histo
 from itertools import *
+from functools import partial
 import logging
+
+
 
 logging.basicConfig(format="%(funcName)s: %(message)s", level=logging.DEBUG)
 
@@ -36,10 +39,12 @@ def endBucket (val, bucketsize):
 
 # OBJECT
 
-class LockTrace:
+
+class LockTrace(object):
     
-    def __init__(self, path):
-        (self.tryD, self.acqD, self.relD, self.namesD) = parseDicTuple(path)
+    def __init__(self, tryD, acqD, relD, namesD):
+        (self.tryD, self.acqD, self.relD, self.namesD) = (tryD, acqD, relD, namesD)
+
 
     def start_ts(self):
         return zip(*elem_from_list_dic(self.tryD, 0))[1]
@@ -56,13 +61,15 @@ class LockTrace:
 
     def set_classes(self, class_l):
         self.classes = class_l
+        self.pop_vector = tuple(map (len, filter(None, class_l)))
 
     def analyze(self):
         if self.classes:
             res_tmp = multi_analyze(self.tryD, self.acqD, self.relD, self.namesD, self.classes)
-            (self.rout_l, self.serv_rates, self.q_type, self.meas_wait) = (res_tmp[0], res_tmp[1], res_tmp[3], res_tmp[4])
+            (self.rout_l, self.serv_rates, self.q_type, self.meas_wait, self.rout_cnt) = (res_tmp[0], res_tmp[1], res_tmp[3], res_tmp[4], res_tmp[6])
         else:
             print "Classes undefined"
+
 
     def serv_times(self):
         if self.serv_rates != None:
@@ -70,12 +77,14 @@ class LockTrace:
         else:
             return None
 
-    def mva(self):
+
+    def mva(self, pop_vector = None):
         if not self.rout_l:
             self.analyze(self)
-        res_tmp = mva_multiclass(self.rout_l, self.serv_rates, tuple(map(len, self.classes)), self.q_type)
+        res_tmp = mva_multiclass(self.rout_l, self.serv_rates, pop_vector or tuple(map(len, self.classes)), self.q_type)
         self.est_wait = res_tmp[0][1::2]
         self.est_qlen = res_tmp[1][1::2]
+        self.lam      = res_tmp[2]
 
     def time_line (self, kind, use_class=False):
         if   kind == timelines.INTER:
@@ -85,12 +94,14 @@ class LockTrace:
             
         tls = map (f, self.tryD.values(), self.acqD.values(), self.relD.values(), self.tryD.keys())
         if use_class and self.classes:
-            return [sorted(merge_lists(idx(cl, tls))) for cl in self.classes]
+            return [[] if cl == [] else sorted(merge_lists(idx(cl, tls))) for cl in self.classes]
         else:
             return sorted(merge_lists(tls))
 
 
     def tl_serv (self, startSeq, middleSeq, endSeq, tag):
+        '''returns a sequential timeline containing (trytime, serv.time, threadid, lockid).
+        '''
         return map (lambda (i,x): (x[1], endSeq[i][1] - middleSeq[i][1], tag, x[0]), enumerate (startSeq))
 
     # interarrival time timeline.
@@ -98,117 +109,66 @@ class LockTrace:
         return map (lambda (i,x): (x[1], x[1] - endSeq[i][1], tag, endSeq[i][0], x[0]), enumerate (startSeq[1:]))
 
 
-def split_tl(tl, n_chunks):
-    timestep = (tl[-1][0] - tl[0][0])/n_chunks
-    tls = []
-    for i in range(tl[0][0]+timestep, tl[-1][0] + 1, timestep):
-        prefix, tl = split(lambda x: x[0] < i, tl)
-        tls.append(prefix)
-    return tls
+# locktrace from a file
+class ParsedLockTrace(LockTrace):
+    def __init__(self, path):
+        (tryD, acqD, relD, namesD) = parseDicTuple(path)
+        super(ParsedLockTrace, self).__init__(tryD, acqD, relD, namesD)
 
 
-def keep_ts_in_range(tryDict,acqDict,relDict,start_ts,end_ts):
-    newRelDict = {}
-    newTryDict = {}
-    newAcqDict = {}
-    for k,v in relDict.iteritems(): #v is a list of the tuple (lockid,timstamp)
-        newRelDict[k] = []
-        newTryDict[k] = []
-        newAcqDict[k] = []
-        i = 0
-        for t in v:
-            if t[1] >= start_ts and t[1] <= end_ts: #the tuple index starts from 0, if the timestamp falls in the rage
-                newRelDict[k].append(t)
-                newTryDict[k].append(tryDict[k][i])
-                newAcqDict[k].append(acqDict[k][i])
-            i = i + 1	
-        if newTryDict[k] == [] or newAcqDict[k] == [] or newRelDict[k] == []:
-            del newTryDict[k]
-            del newAcqDict[k]
-            del newRelDict[k]
-    return (newTryDict,newAcqDict,newRelDict)
-
-
-#def visitratio (lt):
-    # pick the reference queue
-
-def interval(tl, start=None, end=None):
-    if not (start or end):
-        return None
-    if end:
-        tl = takewhile(lambda x: x[0] < end, tl)
-    if start:
-        tl = dropwhile(lambda x: x[0] < start, tl)
-    return tl
-
-def split(predicate, iterable):
-    # dropwhile(lambda x: x<5, [1,4,6,4,1]) --> ([1,4],[6,4,1])
-    iterable = iter(iterable)
-    prefix = []
-    tail = iter([])
-    for x in iterable:
-        if predicate(x):
-            prefix.append(x)
-        else:
-            tail = chain([x], iterable)
-            break
-    return prefix, tail
-
-# the same as before, but this time describes the relation between two groups of timestamps
-def corr_lag_k2 (tl0, tl1, timestep, lag):
-    # only analyse the part the sequences have in common
-    st = max(tl0[0][0], tl1[0][0])
-    en = min(tl0[-1][0], tl1[-1][0])
-    # pad time frames to look nice
-    start = startBucket(st, timestep) 
-    end = endBucket(en, timestep)
-    tl02 = list(interval(tl0, start=start, end=end))
-    tl12 = list(interval(tl1, start=start, end=end))
-
-    # mean number of accesses per time frame
-    steps = (end - start)/float(timestep)
-    mean0 = len(tl02)/steps
-    mean1 = len(tl12)/steps
-
-    ret0, ret1 = [],[]
-    timeLine0,timeLine1 = tl02,tl12
-    for i in range(start, end + 1, timestep):
-
-        prefix0, timeLine0 = split(lambda x: x[0] < i, timeLine0)
-        ret0.append(len(prefix0))
-        #not working correctly if iterator is not evaluated at each step
-        #timeLine0 = interval(timeLine0, start=i)
-        #timeLine0 = list(interval(timeLine0, start=i))
-        prefix1, timeLine1 = split(lambda x: x[0] < i, timeLine1)
-        ret1.append(len(prefix1))
-        #ret1.append(len(list(interval(timeLine1, end=i+timestep))))
-        #not working correctly if iterator is not evaluated at each step
-        #timeLine1 = interval(timeLine1, start=i)
-        #timeLine1 = list(interval(timeLine1, start=i))
-
-    corr, var0, var1 = 0, 0, 0
-    # the inital part of the sequences should be taken into account when calc. abs. variance
-    for i in range(lag):
-        var0 += math.pow(ret0[i] - mean0, 2.0)
-        var1 += math.pow(ret1[i] - mean1, 2.0)
+# defines a new locktrace from a subinterval of an old one
+class SubLockTrace(LockTrace):
+    def __init__(self, old_lt, start_ts, end_ts):
+        if not old_lt.classes:
+            raise ValueError("The locktrace parameter must have classes defined")
+        relD = defaultdict(list)
+        tryD = defaultdict(list)
+        acqD = defaultdict(list)
+        for k,v in old_lt.tryD.iteritems(): #v is a list of the tuple (lockid,timstamp)
+            for i,t in enumerate(v):
+                if t[1] >= start_ts and t[1] <= end_ts: #the tuple index starts from 0, if the timestamp falls in the rage
+                    tryD[k].append(t)
+                    relD[k].append(old_lt.relD[k][i])
+                    acqD[k].append(old_lt.acqD[k][i])
         
-    for i in range(lag, len(ret0)):
-        # this defines correlation between arrival of t0 and an arrival of
-        # sequence t1 lag*timestep timeunits later
-        corr += (ret0[i - lag] - mean0)*(ret1[i] - mean1)
-        var0 += math.pow(ret0[i] - mean0, 2.0)
-        var1 += math.pow(ret1[i] - mean1, 2.0)
+        super(SubLockTrace, self).__init__(dict(tryD), dict(acqD), dict(relD), old_lt.namesD)
+        # map old classes to new ones
+        class_map = map(lambda cl: map(lambda x: (old_lt.tryD.keys()[x], x), cl), old_lt.classes)
+        self.set_classes(filter_class(class_map, self.tryD))
 
-    # get means over appropriate sequences
-    corr /= len(ret0) - lag 
-    var0 /= len(ret0)
-    var1 /= len(ret1)
 
-    # the joint variance defined through the streams std. dev.
-    vari = math.sqrt(var0*var1) 
-    
-    
-    return corr/vari # normalised according to the absolute variance
+# helper function to sublocktrace
+def filter_class(class_map, dic):
+    l = [[t[0] for t in filter(lambda x: x[0] in dic.keys(), sublist)] for sublist in class_map]
+    return [map (dic.keys().index, sublist) for sublist in l]
+
+
+# returns a list of the timestamps when lock has been accessed splitsize times
+# input timeline, lockid, number of lockaccesses of each slice
+def split_tl_by_cnt_at_lock(tl, lock, splitsize):
+    tlf = filter(lambda x: x[3] == lock, tl)
+    return [x[1][0] for x in filter (lambda (i,tp): i % splitsize == 0, enumerate(tlf))]
+
+
+def diclist (lt, splitpoints):
+    res = []
+    prev = 0
+    for i in splitpoints:
+        res.append(SubLockTrace(lt, prev, i))
+        prev = i
+    return res
+
+
+# input locktrace, timeline, chunksize, increase of number of threads (e.g., (2,2,2) -> (10,10,10) is an increase of 5)
+def interval_analysis(lt, tl, lock, splitsize, inc=1):
+    splits = split_tl_by_cnt_at_lock(tl, lock, splitsize)
+    lt_list = diclist (lt, splits)
+    for lt_sub in lt_list:
+        # individual analysis on each timeslot
+        lt_sub.analyze()
+        lt_sub.mva(tuple(map(partial(op.mul, inc), lt_sub.pop_vector)))
+    return lt_list
+
 
 
     
@@ -230,6 +190,14 @@ def mergeDict(d1, d2, op=lambda x,y:x+y):
     for k,v in d2.iteritems():
             res[k] = op(res[k], v)
     return res
+
+def cumulative_sum(l):
+    cum_sum = []
+    y = 0
+    for e in l:  
+        y += e
+        cum_sum.append(y)
+    return cum_sum
 
 def dictToArray (dict):
     size = max(dict.iteritems())[0] + 1
@@ -524,12 +492,9 @@ def avgWaitTime (tryLockSeq, relLockSeq, dim=0):
         arr2[k] = float(s2) /len(v)
 
     return (arr, arr2, countArr)
-    
-
-
 
 def servTime (acqSeqL, relSeqL, dim=0):
-    servTimeList = map (lambda x,y: avgWaitTime(x,y, dim), acqSeqL, relSeqL)
+    servTimeList = map (partial(avgWaitTime, dim=dim), acqSeqL, relSeqL)
     servTimes, servTimesSq, counts = zip (*servTimeList)
     servTimesMtx = listOfArrToMtx (servTimes)
     servTimesSqMtx = listOfArrToMtx (servTimesSq)
@@ -637,17 +602,7 @@ def multi_analyze (tryDic, acqDic, relDic, namesVec, classL, overhead=0.0):
     waitTimeVecL = []
     nLocks = (max ([max (x, key=op.itemgetter(0)) for x in idx(merge_lists(classL), tryDic.values())], key=op.itemgetter(0)))[0] + 1
 
-    # same serv time for all threads
-    #servTimeVec, _ = servTime (acqDic.values(), relDic.values(),dim=nLocks)
-    #cntTotalM = routingCntMtx(tryDic.values())
-    #sumInterArrivalTotalM = interArrivalMtx (tryDic.values(), relDic.values())
-    #r = np.maximum(cntTotalM, np.ones_like (cntTotalM))
-    #avgInterArrivalTotalM = np.divide (sumInterArrivalTotalM, r)
-    #rout = normalizeRowWise (cntTotalM)
-    #_, servTimes = insertIntermediateQs (rout, avgInterArrivalTotalM, servTimeVec)
-    #end same serv time
-
-    for cl in classL:
+    for cl in filter(None, classL):
         trySeqL = idx(cl, tryDic.values())
         acqSeqL = idx(cl, acqDic.values())
         relSeqL = idx(cl, relDic.values())
@@ -664,13 +619,13 @@ def multi_analyze (tryDic, acqDic, relDic, namesVec, classL, overhead=0.0):
     IQs = map (insertIntermediateQs, routL, avgIAML, servTimeVecL)
     newRoutL, newServTimeVecL = zip (*IQs)
 
-    #newServTimeVecL = list(repeat(servTimes, len(newRoutL)))
-    
     servTimeM = listOfArrToMtx (newServTimeVecL)
     qt = list(islice(cycle((1,0)), nLocks*2))
 
     ma_servTimeM = ma.array(servTimeM, mask = servTimeM == 0.0)
     ma_servTimeM[1::2] = ma_servTimeM[1::2] + overhead
+
+    # TODO FIX: divide by zero
     servTimeM2 = 1.0/ma_servTimeM
 
     cntPerClass = map (np.sum, routCntL)
@@ -720,13 +675,6 @@ def runandprintmva (rout, servRates, numT, tryDic, relDic, namesVec, cntTotalM):
         print '%s : act: %6.0f, est: %6.0f, serv: %6.0f, est.incr: %1.3f, acc: %d' % (namesVec[i], actualWait[i], T[1::2][i], servTimes[i], estincr[i], cntTot[i])
 
     return zip (namesVec, actualWait, T[1::2], servTimes, N[1::2])
-
-
-
-
-
-
-
 
 
 # ********************************************************************************
@@ -849,3 +797,83 @@ def prune (mtx, filter):
 
 # end PRUNING
 # --------------------------------------------------------------------------
+
+
+def interval(tl, start=None, end=None):
+    if not (start or end):
+        return None
+    if end:
+        tl = takewhile(lambda x: x[0] < end, tl)
+    if start:
+        tl = dropwhile(lambda x: x[0] < start, tl)
+    return tl
+
+def split(predicate, iterable):
+    # dropwhile(lambda x: x<5, [1,4,6,4,1]) --> ([1,4],[6,4,1])
+    iterable = iter(iterable)
+    prefix = []
+    tail = iter([])
+    for x in iterable:
+        if predicate(x):
+            prefix.append(x)
+        else:
+            tail = chain([x], iterable)
+            break
+    return prefix, tail
+
+# the same as before, but this time describes the relation between two groups of timestamps
+def corr_lag_k2 (tl0, tl1, timestep, lag):
+    # only analyse the part the sequences have in common
+    st = max(tl0[0][0], tl1[0][0])
+    en = min(tl0[-1][0], tl1[-1][0])
+    # pad time frames to look nice
+    start = startBucket(st, timestep) 
+    end = endBucket(en, timestep)
+    tl02 = list(interval(tl0, start=start, end=end))
+    tl12 = list(interval(tl1, start=start, end=end))
+
+    # mean number of accesses per time frame
+    steps = (end - start)/float(timestep)
+    mean0 = len(tl02)/steps
+    mean1 = len(tl12)/steps
+
+    ret0, ret1 = [],[]
+    timeLine0,timeLine1 = tl02,tl12
+    for i in range(start, end + 1, timestep):
+
+        prefix0, timeLine0 = split(lambda x: x[0] < i, timeLine0)
+        ret0.append(len(prefix0))
+        #not working correctly if iterator is not evaluated at each step
+        #timeLine0 = interval(timeLine0, start=i)
+        #timeLine0 = list(interval(timeLine0, start=i))
+        prefix1, timeLine1 = split(lambda x: x[0] < i, timeLine1)
+        ret1.append(len(prefix1))
+        #ret1.append(len(list(interval(timeLine1, end=i+timestep))))
+        #not working correctly if iterator is not evaluated at each step
+        #timeLine1 = interval(timeLine1, start=i)
+        #timeLine1 = list(interval(timeLine1, start=i))
+
+    corr, var0, var1 = 0, 0, 0
+    # the inital part of the sequences should be taken into account when calc. abs. variance
+    for i in range(lag):
+        var0 += math.pow(ret0[i] - mean0, 2.0)
+        var1 += math.pow(ret1[i] - mean1, 2.0)
+        
+    for i in range(lag, len(ret0)):
+        # this defines correlation between arrival of t0 and an arrival of
+        # sequence t1 lag*timestep timeunits later
+        corr += (ret0[i - lag] - mean0)*(ret1[i] - mean1)
+        var0 += math.pow(ret0[i] - mean0, 2.0)
+        var1 += math.pow(ret1[i] - mean1, 2.0)
+
+    # get means over appropriate sequences
+    corr /= len(ret0) - lag 
+    var0 /= len(ret0)
+    var1 /= len(ret1)
+
+    # the joint variance defined through the streams std. dev.
+    vari = math.sqrt(var0*var1) 
+    
+    
+    return corr/vari # normalised according to the absolute variance
+
