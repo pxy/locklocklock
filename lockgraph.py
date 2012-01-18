@@ -1,5 +1,5 @@
 """SLAP-
-$ Time-stamp: <2012-01-16 18:59:16 jonatanlinden>
+$ Time-stamp: <2012-01-18 11:37:48 jonatanlinden>
 
 README:
 A collection of tools to do a queueing network analysis on sequences
@@ -31,11 +31,6 @@ def enum(**enums):
 
 timelines = enum(WAIT=1, QUEUE=2, SERV=3, INTER=4)
 
-def startBucket (val, bucketsize):
-    return int(bucketsize * math.floor(float(val)/bucketsize))
-
-def endBucket (val, bucketsize):
-    return int (bucketsize * math.ceil (float(val)/bucketsize))
 
 # OBJECT
 
@@ -44,7 +39,8 @@ class LockTrace(object):
     
     def __init__(self, tryD, acqD, relD, namesD):
         (self.tryD, self.acqD, self.relD, self.namesD) = (tryD, acqD, relD, namesD)
-
+        self.start = min (start_ts())
+        self.end   = max (end_ts())
 
     def start_ts(self):
         return zip(*elem_from_list_dic(self.tryD, 0))[1]
@@ -65,18 +61,16 @@ class LockTrace(object):
 
     def analyze(self):
         if self.classes:
-            res_tmp = multi_analyze(self.tryD, self.acqD, self.relD, self.namesD, self.classes)
-            (self.rout_l, self.serv_rates, self.q_type, self.meas_wait, self.rout_cnt) = (res_tmp[0], res_tmp[1], res_tmp[3], res_tmp[4], res_tmp[6])
+            r = multi_analyze(self.tryD, self.acqD, self.relD, self.namesD, self.classes)
+            (self.rout_l, self.serv_rates, self.q_type, self.meas_wait, self.rout_cnt) = (r[0], r[1], r[3], r[4], r[6])
         else:
             print "Classes undefined"
-
 
     def serv_times(self):
         if self.serv_rates != None:
             return 1/self.serv_rates[1::2]
         else:
             return None
-
 
     def mva(self, pop_vector = None):
         if not self.rout_l:
@@ -94,10 +88,9 @@ class LockTrace(object):
             
         tls = map (f, self.tryD.values(), self.acqD.values(), self.relD.values(), self.tryD.keys())
         if use_class and self.classes:
-            return [[] if cl == [] else sorted(merge_lists(idx(cl, tls))) for cl in self.classes]
+            self.tl = [[] if cl == [] else sorted(merge_lists(idx(cl, tls))) for cl in self.classes]
         else:
-            return sorted(merge_lists(tls))
-
+            self.tl = sorted(merge_lists(tls))
 
     def tl_serv (self, startSeq, middleSeq, endSeq, tag):
         '''returns a sequential timeline containing (trytime, serv.time, threadid, lockid).
@@ -126,14 +119,14 @@ class SubLockTrace(LockTrace):
         acqD = defaultdict(list)
         for k,v in old_lt.tryD.iteritems(): #v is a list of the tuple (lockid,timstamp)
             for i,t in enumerate(v):
-                if t[1] >= start_ts and t[1] <= end_ts: #the tuple index starts from 0, if the timestamp falls in the rage
+                if t[1] > start_ts and t[1] <= end_ts: # if access starts in (start_ts, end_ts], keep all accesses
                     tryD[k].append(t)
                     relD[k].append(old_lt.relD[k][i])
                     acqD[k].append(old_lt.acqD[k][i])
         
         super(SubLockTrace, self).__init__(dict(tryD), dict(acqD), dict(relD), old_lt.namesD)
         # map old classes to new ones
-        class_map = map(lambda cl: map(lambda x: (old_lt.tryD.keys()[x], x), cl), old_lt.classes)
+        class_map = [map(lambda x: (old_lt.tryD.keys()[x], x), cl) for cl in old_lt.classes]
         self.set_classes(filter_class(class_map, self.tryD))
 
 
@@ -147,8 +140,8 @@ def filter_class(class_map, dic):
 # input timeline, lockid, number of lockaccesses of each slice
 def split_tl_by_cnt_at_lock(tl, lock, splitsize):
     tlf = filter(lambda x: x[3] == lock, tl)
-    return [x[1][0] for x in filter (lambda (i,tp): i % splitsize == 0, enumerate(tlf))]
-
+    l = [x[1][0] for x in filter (lambda (i,tp): i % splitsize == 0, enumerate(tlf))]
+    return l[1:] if l else []
 
 def diclist (lt, splitpoints):
     res = []
@@ -156,22 +149,20 @@ def diclist (lt, splitpoints):
     for i in splitpoints:
         res.append(SubLockTrace(lt, prev, i))
         prev = i
+    res.append(SubLockTrace(lt, prev, max(lt.end_ts())))
     return res
 
-
-# input locktrace, timeline, chunksize, increase of number of threads (e.g., (2,2,2) -> (10,10,10) is an increase of 5)
-def interval_analysis(lt, tl, lock, splitsize, inc=1):
-    splits = split_tl_by_cnt_at_lock(tl, lock, splitsize)
+# input locktrace, class (that is used to determine number of accesses), chunksize, increase of number of threads (e.g., (2,2,2) -> (10,10,10) is an increase of 5)
+def interval_analysis(lt, cls, lock, splitsize, inc=1):
+    splits = split_tl_by_cnt_at_lock(lt.tl[cls], lock, splitsize)
     lt_list = diclist (lt, splits)
     for lt_sub in lt_list:
         # individual analysis on each timeslot
         lt_sub.analyze()
         lt_sub.mva(tuple(map(partial(op.mul, inc), lt_sub.pop_vector)))
+        lt_sub.time_line(timelines.SERV, use_class=True)
     return lt_list
 
-
-
-    
 
 # --------------------------------------------------------------------------
 # UTILS
@@ -275,7 +266,7 @@ def imax(l, key=None):
     return l.index(max(l, key=key))
 
 def imin(l, key=None):
-    '''Indexed max function
+    '''Indexed min function
     '''
     return l.index(min(l, key=key))
 
@@ -406,9 +397,6 @@ def countMtxFromSeq(lockSeq, dim):
         lockD[last][lID[0]] += 1
         last = lID[0]
     return dictToMatrix(lockD, dim)
-
-
-
 
 
 
@@ -797,6 +785,13 @@ def prune (mtx, filter):
 
 # end PRUNING
 # --------------------------------------------------------------------------
+
+
+def startBucket (val, bucketsize):
+    return int(bucketsize * math.floor(float(val)/bucketsize))
+
+def endBucket (val, bucketsize):
+    return int (bucketsize * math.ceil (float(val)/bucketsize))
 
 
 def interval(tl, start=None, end=None):
