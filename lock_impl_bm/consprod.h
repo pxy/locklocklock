@@ -35,10 +35,19 @@ typedef struct {
          i < arr->len && iter = g_array_index(arr, type, i);    \
          i++)
 
+static inline void __attribute__((always_inline))
+atomic_inc_int32(int32_t *var)
+{
+    __asm__ ("lock incl %0;"
+	     : "+m" (*var));
+}
 
-
-
-
+static inline void __attribute__((always_inline))
+atomic_dec_int32(int32_t *var)
+{
+    __asm__ ("lock decl %0;"
+	     : "+m" (*var));
+}
 
 
 #endif

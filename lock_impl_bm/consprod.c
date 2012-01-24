@@ -7,6 +7,7 @@
 #include <gsl/gsl_randist.h>
 #include <unistd.h>
 #include <string.h>
+#include <math.h>
 
 #include "clh.h"
 #include "../tsc.h"
@@ -23,22 +24,27 @@
 
 // kalkyl freq
 #define MHZ 2270
-#define NTHREADS 4
+#define GHZ 2.270
+// number of threads used in exp.
+// has to be a multiple of 2
+#define NTHREADS 2
+
 //#define USE_THREADPINNING
 
+//#define COND_THRU
 
 
-
-void (* lock_impl)(int thread);
+void (* lock_impl)  (int thread);
 void (* unlock_impl)(int thread);
-int (* next_f)(int mu);
+int  (* next_cs_f)  (int mu);
+int  (* next_l_f)   (int mu);
 
 int set_lock_impl(int);
 void *run(void *);
 static void lock(int);
 static void unlock(int);
-static int get_next_d (int);
-static int get_next_e (int);
+static int  get_next_d (int);
+static int  get_next_e (int);
 static void p_unlock(int thread);
 static void p_lock(int thread);
 void save_arr(void);
@@ -46,7 +52,7 @@ void save_arr(void);
 GArray *t_times[NTHREADS];
 
 char type;
-char rng_type;
+char *rng_type;
 gsl_rng *rng;
 uint64_t end;
 time_info_t current_ts[NTHREADS];
@@ -59,8 +65,16 @@ cpu_set_t cpuset[NTHREADS];
 int thread_cpu_map[NTHREADS] = {0,2,4,6};
 #endif
 
-int runtime;
+#ifdef COND_THRU
+volatile int in_cs = 0;
 
+#endif
+
+
+int runtime;
+int think_c0 = 6, think_c1 = 800;
+int serv_c0 = 120, serv_c1 = 180;
+int loop_limit = 0;
 
 int main(int argc, char *argv[]){
 
@@ -70,19 +84,23 @@ int main(int argc, char *argv[]){
     extern char *optarg;
     extern int optind, optopt;
 
+    int d_type;
     /* default time gen: exponential */
-    next_f = &get_next_e;
-    rng_type = 'e';
-
+    next_cs_f = &get_next_e;
+    next_l_f  = &get_next_e;
+    rng_type  = "e";
 
     /* Read options/settings */
     
-    while ((opt = getopt(argc, argv, "c:t:d")) != -1) {
+    while ((opt = getopt(argc, argv, "s:c:t:w:d:l:")) != -1) {
         switch (opt) {
         case 'c':
             if (set_lock_impl(atoi(optarg)))
                 errexit = 1;
             break;
+	case 'l':
+	    loop_limit = atoi(optarg);
+	    break;
         case 't':
             runtime = atoi(optarg);
             if(runtime <= 0){
@@ -93,9 +111,33 @@ int main(int argc, char *argv[]){
                 errexit = 1;
             }
             break;
+        case 'w':
+            if (2 != sscanf(optarg, "%d,%d", &think_c0, &think_c1))
+                errexit = 1;
+            break;
+	case 's':
+	    if (2 != sscanf(optarg, "%d,%d", &serv_c0, &serv_c1))
+	        errexit = 1;
+	    break;
         case 'd':
-            next_f = &get_next_d;
-            rng_type = 'd';
+
+	  d_type = atoi(optarg);
+	  if (d_type < 0 || d_type > 1){
+	    fprintf(stderr,
+		    "Invalid argument '%s'.",
+		    optarg);
+	    errexit = 1;
+
+	  }
+	  else if (d_type == 0) {
+            next_cs_f = &get_next_d;
+	    next_l_f  = &get_next_d;
+            rng_type  = "d0";
+	  } else {
+	    next_cs_f = &get_next_d;
+	    next_l_f  = &get_next_e;
+	    rng_type  = "d1";
+	  }
             break;
             //case 'h':
             //usage(stdout, argv[0]);
@@ -131,14 +173,15 @@ int main(int argc, char *argv[]){
     // stop experiment when time end (in cycles) is reached
     end = runtime * MHZ * 1000000L + read_tsc_p();
     // two different classes
-    // unfair values class1: 6, 120, class2: 800, 180;
-    classes[0].think_t = MHZ*6;
-    classes[0].service_t = MHZ*120;
+    classes[0].think_t = floor(GHZ*think_c0);
+    classes[0].service_t = MHZ*serv_c0;
 
-    classes[1].think_t = MHZ*800;
-    classes[1].service_t = MHZ*180;
+    classes[1].think_t = floor(GHZ*think_c1);
+    classes[1].service_t = MHZ*serv_c1;
 
+    printf("think time, c0:%d, c1:%d\n", classes[0].think_t, classes[1].think_t);
 
+    int64_t start = read_tsc_p();
     /* SPAWN */
     for (int i = 0; i < NTHREADS; i++) {
         thread_args_t *t = &threads[i];
@@ -160,6 +203,10 @@ int main(int argc, char *argv[]){
     /* JOIN */
     for (int i = 0; i < NTHREADS; i++)
         pthread_join(threads[i].thread, NULL);
+
+    int64_t end = read_tsc_p();
+
+    printf("Total time: %ld\n", end - start);
 
     save_arr();
 
@@ -185,19 +232,20 @@ void* run(void *_args){
     do {
         // think locally
         start = read_tsc_p();
-        pause = next_f(args->class_info.think_t);
+
+        pause = next_l_f(args->class_info.think_t);
         while(read_tsc_p() - start < pause)
             ;
-        
         /* critical section */
         lock (args->tid);
         start = read_tsc_p();
-        pause = next_f(args->class_info.service_t);
-        while(read_tsc_p() - start < pause)
+        pause = next_cs_f(args->class_info.service_t);
+	while(read_tsc_p() - start < pause)
             ;
         unlock (args->tid);
-        cnt++;
+	cnt++;
 
+	
     } while (read_tsc_p() < end);
     
     printf("tid: %d, cnt: %d\n", args->tid, cnt);
@@ -205,7 +253,7 @@ void* run(void *_args){
 }
 
 /* lock/unlock functions, including timing */
-static void 
+void 
 lock(int tid)
 {
     current_ts[tid].try = read_tsc_p();
@@ -213,7 +261,7 @@ lock(int tid)
     current_ts[tid].acq = read_tsc_p();
 }
 
-static void
+void
 unlock(int tid)
 {
     unlock_impl(tid);
@@ -226,7 +274,7 @@ get_next_e(int mu) {
     return (int) gsl_ran_exponential (rng, (double) mu);
 }
 
-static int
+int
 get_next_d(int mu) {
     return (int) mu;
 }
@@ -280,7 +328,7 @@ save_arr()
     char prefix[20];
     char stry[30], sacq[30], srel[30];
 
-    snprintf (prefix, sizeof prefix, "%s_%d_%c%c_%d", "output", NTHREADS, type, rng_type, runtime);
+    snprintf (prefix, sizeof prefix, "%s_%d_%c%s_%d", "output", NTHREADS, type, rng_type, runtime);
     
     strcpy (stry, prefix);
     strcat (stry, "_try.dat");
