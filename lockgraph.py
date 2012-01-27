@@ -1,5 +1,5 @@
 """SLAP-
-$ Time-stamp: <2012-01-18 11:37:48 jonatanlinden>
+$ Time-stamp: <2012-01-27 13:22:11 jonatanlinden>
 
 README:
 A collection of tools to do a queueing network analysis on sequences
@@ -10,7 +10,7 @@ should be sorted by the timestamp.
 """
 
 from collections import defaultdict
-import os,re,csv,subprocess,math
+import os,re,csv,subprocess,math,struct,logging
 import numpy as np
 import numpy.ma as ma
 import operator as op
@@ -18,7 +18,7 @@ from mva import st_mva, mva_multiclass
 import histo
 from itertools import *
 from functools import partial
-import logging
+
 
 
 
@@ -39,8 +39,10 @@ class LockTrace(object):
     
     def __init__(self, tryD, acqD, relD, namesD):
         (self.tryD, self.acqD, self.relD, self.namesD) = (tryD, acqD, relD, namesD)
-        self.start = min (start_ts())
-        self.end   = max (end_ts())
+        self.start = min (self.start_ts())
+        self.end   = max (self.end_ts())
+        self.tl    = None
+        self.classes = None
 
     def start_ts(self):
         return zip(*elem_from_list_dic(self.tryD, 0))[1]
@@ -80,11 +82,15 @@ class LockTrace(object):
         self.est_qlen = res_tmp[1][1::2]
         self.lam      = res_tmp[2]
 
+    
+
     def time_line (self, kind, use_class=False):
         if   kind == timelines.INTER:
             f = self.tl_inter
         elif kind == timelines.SERV:
             f = self.tl_serv
+
+        self.tl_class = use_class
             
         tls = map (f, self.tryD.values(), self.acqD.values(), self.relD.values(), self.tryD.keys())
         if use_class and self.classes:
@@ -99,7 +105,20 @@ class LockTrace(object):
 
     # interarrival time timeline.
     def tl_inter (self, startSeq, middleSeq, endSeq, tag):
-        return map (lambda (i,x): (x[1], x[1] - endSeq[i][1], tag, endSeq[i][0], x[0]), enumerate (startSeq[1:]))
+        return map (lambda (i,x): (x[1], x[1] - endSeq[i][1], endSeq[i][0], tag, x[0]), enumerate (startSeq[1:]))
+
+    def num_accesses (self, lock_id, cls = None):
+        if not self.tl:
+            print "Define a timeline."
+            return None
+        if not (cls or self.tl_class):
+            n_acc = len(filter(lambda x: x[-1] == lock_id, self.tl))
+        elif self.tl_class and cls:
+            n_acc = len(filter(lambda x: x[-1] == lock_id, self.tl[cls]))
+        elif self.tl_class and not cls:
+            n_acc = len(filter(lambda x: x[-1] == lock_id, merge_lists(self.tl)))
+        return n_acc
+
 
 
 # locktrace from a file
@@ -130,20 +149,33 @@ class SubLockTrace(LockTrace):
         self.set_classes(filter_class(class_map, self.tryD))
 
 
+
+def sub_lt_by_class(lt, cls):
+    ls = idx(lt.classes[cls], lt.tryD.values())
+    mx = max ([x[-1][1] for x in ls])
+    mn = min ([x[0][1]  for x in ls])
+    return SubLockTrace(lt, mn, mx)
+
+def rate_of_lock(lt, cls, lockid):
+    f0 = filter (lambda x: x[3]==lockid, lt.tl[cls])
+    return len(f0)*20./float((f0[-1][0] - f0[0][0]))
+    
 # helper function to sublocktrace
+# maps classes according to class map, based on keys in dic.
 def filter_class(class_map, dic):
     l = [[t[0] for t in filter(lambda x: x[0] in dic.keys(), sublist)] for sublist in class_map]
     return [map (dic.keys().index, sublist) for sublist in l]
 
 
-# returns a list of the timestamps when lock has been accessed splitsize times
+# returns a list of the timestamps when lock lock has been accessed splitsize times
 # input timeline, lockid, number of lockaccesses of each slice
-def split_tl_by_cnt_at_lock(tl, lock, splitsize):
+def timestamps_by_cnt_at_lock(tl, lock, splitsize):
     tlf = filter(lambda x: x[3] == lock, tl)
     l = [x[1][0] for x in filter (lambda (i,tp): i % splitsize == 0, enumerate(tlf))]
     return l[1:] if l else []
 
-def diclist (lt, splitpoints):
+# splits a locktrace into a list of locktraces based on the timestamps in splitpoints
+def split_locktrace_by_time (lt, splitpoints):
     res = []
     prev = 0
     for i in splitpoints:
@@ -154,8 +186,8 @@ def diclist (lt, splitpoints):
 
 # input locktrace, class (that is used to determine number of accesses), chunksize, increase of number of threads (e.g., (2,2,2) -> (10,10,10) is an increase of 5)
 def interval_analysis(lt, cls, lock, splitsize, inc=1):
-    splits = split_tl_by_cnt_at_lock(lt.tl[cls], lock, splitsize)
-    lt_list = diclist (lt, splits)
+    splits = timestamps_by_cnt_at_lock(lt.tl[cls], lock, splitsize)
+    lt_list = split_locktrace_by_time (lt, splits)
     for lt_sub in lt_list:
         # individual analysis on each timeslot
         lt_sub.analyze()
@@ -164,9 +196,40 @@ def interval_analysis(lt, cls, lock, splitsize, inc=1):
     return lt_list
 
 
+def unpack_timeline(f_name):
+    '''Unpacks a binary file containing 64-bit timestamps in lots of five, skipping any zeroes.
+    '''
+    tl = []
+    with open(f_name) as f:
+        for block in chunked(f, 40):
+            a,b,c,d,e, = struct.unpack('qqqqq', block)
+            if a == 0:
+                continue
+            tl.append((a,b,c,d,e))
+    return tl
+
 # --------------------------------------------------------------------------
 # UTILS
 
+def first_where(l, p):
+    (i for i,v in enumerate(l) if p(v)).next();
+
+def chunked (f, n):
+    '''reads chunks of binary data of size n from open file f until EOF
+    '''
+    while 1:
+        s = f.read(n)
+        if not s:
+            break
+        yield s
+ 
+def chunk_timeline(tl, size):
+    prev = 0
+    l = []
+    for i in xrange(size,len(tl), size):
+        l.append(tl[prev:i])
+    return l
+       
 
 def findGr8estKey (dic):
     '''returns the greatest key found in a nested dictionary of two levels
