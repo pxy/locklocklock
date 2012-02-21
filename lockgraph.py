@@ -1,5 +1,5 @@
 """SLAP-
-$ Time-stamp: <2012-01-27 13:22:11 jonatanlinden>
+$ Time-stamp: <2012-02-14 14:08:06 jonatanlinden>
 
 README:
 A collection of tools to do a queueing network analysis on sequences
@@ -150,14 +150,16 @@ class SubLockTrace(LockTrace):
 
 
 
-def sub_lt_by_class(lt, cls):
+def sub_lt_by_class(lt, cls, start=None):
     ls = idx(lt.classes[cls], lt.tryD.values())
     mx = max ([x[-1][1] for x in ls])
-    mn = min ([x[0][1]  for x in ls])
+    mn = start or min ([x[0][1]  for x in ls])
     return SubLockTrace(lt, mn, mx)
 
 def rate_of_lock(lt, cls, lockid):
     f0 = filter (lambda x: x[3]==lockid, lt.tl[cls])
+    if len(f0) == 0:
+        return 0.0
     return len(f0)*20./float((f0[-1][0] - f0[0][0]))
     
 # helper function to sublocktrace
@@ -167,12 +169,29 @@ def filter_class(class_map, dic):
     return [map (dic.keys().index, sublist) for sublist in l]
 
 
+
+
 # returns a list of the timestamps when lock lock has been accessed splitsize times
 # input timeline, lockid, number of lockaccesses of each slice
 def timestamps_by_cnt_at_lock(tl, lock, splitsize):
     tlf = filter(lambda x: x[3] == lock, tl)
     l = [x[1][0] for x in filter (lambda (i,tp): i % splitsize == 0, enumerate(tlf))]
     return l[1:] if l else []
+
+def split_tl(tl, splits, chunks=None, start=None, end=None):
+    res = []
+    _start = start or tl[0][0] - 1
+    _end   = end   or tl[-1][0]
+    prev = _start
+    _splits = splits
+    if chunks:
+        size = (_end - _start)/chunks
+        _splits = list(islice(count(_start, size), 1, chunks))
+    for i in _splits:
+        res.append(filter(lambda x: x[0] > prev and x[0] <= i, tl))
+        prev = i
+    res.append(filter(lambda x: x[0] > prev and x[0] <= _end, tl))
+    return res
 
 # splits a locktrace into a list of locktraces based on the timestamps in splitpoints
 def split_locktrace_by_time (lt, splitpoints):
@@ -196,23 +215,133 @@ def interval_analysis(lt, cls, lock, splitsize, inc=1):
     return lt_list
 
 
-def unpack_timeline(f_name):
-    '''Unpacks a binary file containing 64-bit timestamps in lots of five, skipping any zeroes.
+def unpack_timeline(f_name, n):
+    '''Unpacks a binary file containing 64-bit timestamps, in lots of n, skipping any zeroes.
     '''
     tl = []
     with open(f_name) as f:
-        for block in chunked(f, 40):
-            a,b,c,d,e, = struct.unpack('qqqqq', block)
-            if a == 0:
-                continue
-            tl.append((a,b,c,d,e))
+        for block in chunked(f, 8*n): # n times 64 bit
+            n_plus_1_tuple = struct.unpack(n*'q', block)
+            if n_plus_1_tuple[0] == 0:
+                if all(0 == e for e in n_plus_1_tuple[:n]): # sanity check
+                    continue
+                else:
+                    raise IndexError 
+            tl.append(n_plus_1_tuple[:n])
     return tl
+
+
+def mem_move (dic0, dic1, cpudic, state, tid, to, fro):
+    node = cpudic[state[tid]]
+    if fro == -2 and node != to:
+        dic0[tid] += 1
+
+    if fro != -2:
+        if fro != to:
+            if to == node:
+                dic1[tid]['home'] += 1
+            else:
+                dic1[tid]['away'] += 1
+        elif node == to:
+            dic1[tid]['local'] += 1
+        else:
+            dic1[tid]['remote'] += 1
+
+def find_key(dic, val):
+    """return the key of dictionary dic given the value"""
+    return [k for k, v in dic.iteritems() if v == val]
+
+def collide (tl):
+    cpuof = {}
+    justmovedto = defaultdict(int)
+    cntcpu = {}
+    impending_coll = {}
+    for i,v in enumerate(tl):
+        tid = v[1]
+        cpu = v[2]
+        oldcpu = cpuof[tid] if tid in cpuof else cpu
+        cpuof[tid] = cpu
+
+        if tid in impending_coll and impending_coll[tid] == cpu:
+            print  "%d just moved to core of " % justmovedto[cpuof[tid]], find_key(cpuof, cpuof[tid]), ", index ", i
+
+        if tid in cpuof and oldcpu != cpu:
+            justmovedto[cpu] = tid
+            cntcpu[cpu] = 0
+        elif justmovedto[cpu] and justmovedto[cpu] != tid:
+            impending_coll[tid] = cpu
+
+                # someone else has moved to my core. -> collision
+                # but only collision if I work once more on this core and the other
+                # one hasn't worked elsewhere during that time
+            
+        if justmovedto[cpu] == tid and cpuof[tid] == cpu:
+            cntcpu[cpu] += 1
+            if cntcpu[cpu] > 500:
+                justmovedto[cpu] = 0 # no one has tid 0
+                cntcpu[cpu] = 0
+    print cntcpu, impending_coll
+        
+
+        
+#state:
+#tid at cpu dic
+def cpumoveinfo (cputomemdic, tl):
+    state = defaultdict(int)
+    move  = defaultdict(int)
+    alloc = defaultdict(int)
+    cpy   = defaultdict(lambda : defaultdict(int))
+    for (ts, tid, cpu, to, fro) in tl:
+        if tid in state and state[tid] != cpu:
+            move[tid] += 1
+        state[tid] = cpu
+        mem_move(alloc, cpy, cputomemdic, state, tid, to, fro)
+
+    for k, v in alloc.iteritems():
+        print "%d alloc on remote: %d" % (k, v)
+
+    for k, v in cpy.iteritems():
+        for ks, vs in v.iteritems():
+            print "%d cpy: %s: %d" % (k, ks, vs)
+
+
+    if collide (tl):
+        print "core is shared"
+
+    if not move:
+        print "No cpu migration"
+    else:
+        for k, v in move.iteritems():
+            print "%d migrate: %d" % (k,v)
+
+
+def normalize_ts_l(l):
+    return np.asarray(l) - l[0]
+
+def tuple_avg_of_chunks(list_of_tuple_lists, tuple_idx, width):
+    '''avg. over tuple_l, in chunks, tuple elem with index tuple_idx.
+    '''
+    avg_l = [np.average(np.asarray(x), axis=0) for x in list_of_tuple_lists]
+    # correct if empty elems in list
+    avg_l = np.array([np.array([0]*width) if not isinstance(x, np.ndarray) else x for x in avg_l ])[:,tuple_idx]
+    return avg_l
+
+
+
 
 # --------------------------------------------------------------------------
 # UTILS
 
 def first_where(l, p):
     (i for i,v in enumerate(l) if p(v)).next();
+
+def dist_elem (l):
+    '''[x0, x1, ..., xn-1, xn] -> [x1-x0, ..., xn - xn-1]
+    '''
+    (a,b) = tee(l)
+    b.next()
+    return list(imap(op.sub, b,a))
+
 
 def chunked (f, n):
     '''reads chunks of binary data of size n from open file f until EOF
@@ -229,7 +358,7 @@ def chunk_timeline(tl, size):
     for i in xrange(size,len(tl), size):
         l.append(tl[prev:i])
     return l
-       
+
 
 def findGr8estKey (dic):
     '''returns the greatest key found in a nested dictionary of two levels

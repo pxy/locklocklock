@@ -65,8 +65,9 @@ def writeHisto2 (hist, name, path):
 	np.savetxt(fd, hist, delimiter=' ', fmt='%d')
 
 def write_result (data, name, path):
-	w = csv.writer(open(path + os.sep + name + '.dat', 'w'), delimiter=' ', lineterminator='\n')
-	w.writerows(data)
+    with open(path + os.sep + name + '.dat', 'w') as f:
+        w = csv.writer(f, delimiter=' ', lineterminator='\n')
+        w.writerows(data)
 
 def maxLockdist (timeline):
     maxval = 0
