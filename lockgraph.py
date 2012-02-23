@@ -1,5 +1,5 @@
 """SLAP-
-$ Time-stamp: <2012-02-14 14:08:06 jonatanlinden>
+$ Time-stamp: <2012-02-22 10:04:12 jonatanlinden>
 
 README:
 A collection of tools to do a queueing network analysis on sequences
@@ -327,13 +327,18 @@ def tuple_avg_of_chunks(list_of_tuple_lists, tuple_idx, width):
     return avg_l
 
 
-
+def idx_of_sublist(l, subl):
+    return first_where(l, lambda x: elem_wise(x, subl))
 
 # --------------------------------------------------------------------------
 # UTILS
 
+def elem_wise(l1, l2) :
+    matches = [i for i, j in zip(l1, l2) if i == j]
+    return len (l1) == len (matches)
+
 def first_where(l, p):
-    (i for i,v in enumerate(l) if p(v)).next();
+    return next(i for (i,v) in enumerate(l) if p(v))
 
 def dist_elem (l):
     '''[x0, x1, ..., xn-1, xn] -> [x1-x0, ..., xn - xn-1]
@@ -460,7 +465,10 @@ def imax(l, key=None):
 def imin(l, key=None):
     '''Indexed min function
     '''
-    return l.index(min(l, key=key))
+    if key:
+        return l.index(min(l, key=key))
+    else:
+        return l.index(min(l))
 
 
 def count(firstval=0, step=1):
@@ -500,6 +508,14 @@ def idx(idxl, l):
 
 # --------------------------------------------------------------------------
 # PARSING CVS
+
+def creationParse(file):
+    lockCreateList = []
+    recReader = csv.reader (file, delimiter=' ', skipinitialspace=True)
+    for _row in recReader:
+        lockCreateList.append(_row[1])
+    return lockCreateList
+
 
 def creationParse(file):
     lockCreateList = []

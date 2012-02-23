@@ -8,7 +8,7 @@
 # arg 2 : the new name of the files
 
 
-if [ $# -ne 2 ]; then
+if [ $# -ne 1 ]; then
 	echo "Wrong number of arguments."
 	exit
 fi
@@ -23,17 +23,21 @@ fi
 #	exit
 #fi
 
-echo "Creating: $(dirname $1)/$2_try.dat"
-java org.basex.BaseX mutrace_tools/try_ts_mxID_tID.xq -i "$1" | sed 's/^[ \t]*//' | sort -n -k 1 > "$(dirname $1)/$2_try.dat"
+fd=$(dirname $1)
+fn=$(basename $1 ".xml")
 
-echo "Creating: $(dirname $1)/$2_acq.dat"
-java org.basex.BaseX mutrace_tools/acq_ts_mxID_tID.xq -i "$1" | sed 's/^[ \t]*//' | sort -n -k 1 > "$(dirname $1)/$2_acq.dat"
+echo "Creating: ${fd}/${fn}_try.dat"
+java org.basex.BaseX -i "$1" mutrace_tools/try_ts_mxID_tID.xq | sed 's/^[ \t]*//' | sort -n -k 1 > "${fd}/${fn}_try.dat"
 
-echo "Creating: $(dirname $1)/$2_rel.dat"
-java org.basex.BaseX mutrace_tools/rel_ts_mxID_tID.xq -i "$1" | sed 's/^[ \t]*//' | sort -n -k 1 > "$(dirname $1)/$2_rel.dat"
+echo "Creating: ${fd}/${fn}_acq.dat"
+java org.basex.BaseX -i "$1" mutrace_tools/acq_ts_mxID_tID.xq | sed 's/^[ \t]*//' | sort -n -k 1 > "${fd}/${fn}_acq.dat"
 
-echo "Creating: $(dirname $1)/$2_addr.dat"
-java org.basex.BaseX mutrace_tools/mx_trace.xq -i "$1" | sed 's/^[ \t]*//' | sort -n -k 1 > "$(dirname $1)/$2_addr.dat"
+echo "Creating: ${fd}/${fn}_rel.dat"
+java org.basex.BaseX -i "$1" mutrace_tools/rel_ts_mxID_tID.xq | sed 's/^[ \t]*//' | sort -n -k 1 > "${fd}/${fn}_rel.dat"
 
-echo "Creating: $(dirname $1)/$2_cond.dat"
-java org.basex.BaseX mutrace_tools/condtime_tID_mxID.xq -i "$1" | sed 's/^[ \t]*//' > "$(dirname $1)/$2_cond.dat"
+echo "Creating: ${fd}/${fn}_addr.dat"
+java org.basex.BaseX -i "$1" mutrace_tools/mx_trace.xq | sed 's/^[ \t]*//' | sort -n -k 1 > "${fd}/${fn}_addr.dat"
+
+echo "Creating: ${fd}/${fn}_cond.dat"
+java org.basex.BaseX -i "$1" mutrace_tools/condtime_tID_mxID.xq | sed 's/^[ \t]*//' > "${fd}/${fn}_cond.dat"
+
