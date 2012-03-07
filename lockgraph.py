@@ -1,5 +1,5 @@
 """SLAP-
-$ Time-stamp: <2012-02-22 10:04:12 jonatanlinden>
+$ Time-stamp: <2012-03-01 16:15:32 jonatanlinden>
 
 README:
 A collection of tools to do a queueing network analysis on sequences
@@ -81,9 +81,7 @@ class LockTrace(object):
         self.est_wait = res_tmp[0][1::2]
         self.est_qlen = res_tmp[1][1::2]
         self.lam      = res_tmp[2]
-
     
-
     def time_line (self, kind, use_class=False):
         if   kind == timelines.INTER:
             f = self.tl_inter
@@ -178,15 +176,21 @@ def timestamps_by_cnt_at_lock(tl, lock, splitsize):
     l = [x[1][0] for x in filter (lambda (i,tp): i % splitsize == 0, enumerate(tlf))]
     return l[1:] if l else []
 
-def split_tl(tl, splits, chunks=None, start=None, end=None):
+def timestamps_by_chunksize (start, end, chunksize):
+    ts_l = range(start+chunksize, end, chunksize)
+    if ts_l[-1] < 0.5 * chunksize:
+        print "Warning: last chunk too small"
+    return ts_l
+    
+def split_tl(tl, splits, chunks=None, start=None, end=None, size=None):
     res = []
     _start = start or tl[0][0] - 1
     _end   = end   or tl[-1][0]
     prev = _start
     _splits = splits
     if chunks:
-        size = (_end - _start)/chunks
-        _splits = list(islice(count(_start, size), 1, chunks))
+        _size = (_end - _start)/chunks
+        _splits = list(islice(count(_start, _size), 1, chunks))
     for i in _splits:
         res.append(filter(lambda x: x[0] > prev and x[0] <= i, tl))
         prev = i
@@ -203,9 +207,14 @@ def split_locktrace_by_time (lt, splitpoints):
     res.append(SubLockTrace(lt, prev, max(lt.end_ts())))
     return res
 
-# input locktrace, class (that is used to determine number of accesses), chunksize, increase of number of threads (e.g., (2,2,2) -> (10,10,10) is an increase of 5)
-def interval_analysis(lt, cls, lock, splitsize, inc=1):
-    splits = timestamps_by_cnt_at_lock(lt.tl[cls], lock, splitsize)
+# input locktrace, class (that is used to determine number of
+# accesses), chunksize, increase of number of threads (e.g., (2,2,2)
+# -> (10,10,10) is an increase of 5)
+def interval_analysis(lt, cls, lock, splitsize=None, inc=1, timechunk=None):
+    if not timechunk:
+        splits = timestamps_by_cnt_at_lock(lt.tl[cls], lock, splitsize)
+    else:
+        splits = timestamps_by_chunksize(lt.tl[cls][0][0], lt.tl[cls][-1][0], timechunk)
     lt_list = split_locktrace_by_time (lt, splits)
     for lt_sub in lt_list:
         # individual analysis on each timeslot
@@ -1010,6 +1019,7 @@ def interval(tl, start=None, end=None):
     if start:
         tl = dropwhile(lambda x: x[0] < start, tl)
     return tl
+
 
 def split(predicate, iterable):
     # dropwhile(lambda x: x<5, [1,4,6,4,1]) --> ([1,4],[6,4,1])

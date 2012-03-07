@@ -15,7 +15,7 @@ def st_mva(p, u, M, q_type=None):
     K = p.shape[0] #number of queues
 
     # we assume every second queue is infinite server (i.e., think time)
-    if not q_type:
+    if not any(q_type):
         q_type = np.array(map (lambda (i): i % 2, range(K)))
 
     v = solve_dtmc(p)
@@ -37,7 +37,7 @@ def st_mva(p, u, M, q_type=None):
         N[:,m] = lam*v*W[:,m]
 
     # return the waiting times for the case when M customers are in the network
-    return W[:,M], N[:,M]
+    return lam*v, W[:,M] #, N[:,M]
 
 
 # single class mva with load dependent service rate
