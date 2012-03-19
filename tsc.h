@@ -31,7 +31,6 @@ read_tsc_p()
    return tsc;
 }
 
-
 static inline uint64_t  __attribute__((always_inline))
 read_tsc_fenced()
 {
