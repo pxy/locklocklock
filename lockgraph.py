@@ -1,5 +1,5 @@
 """SLAP-
-$ Time-stamp: <2012-03-01 16:15:32 jonatanlinden>
+$ Time-stamp: <2012-04-13 14:51:38 jonatanlinden>
 
 README:
 A collection of tools to do a queueing network analysis on sequences
@@ -66,7 +66,9 @@ class LockTrace(object):
             r = multi_analyze(self.tryD, self.acqD, self.relD, self.namesD, self.classes)
             (self.rout_l, self.serv_rates, self.q_type, self.meas_wait, self.rout_cnt) = (r[0], r[1], r[3], r[4], r[6])
         else:
-            print "Classes undefined"
+            # no classes defined, assume single class case
+            self.set_classes([range(len(self.start_ts()))])
+            self.analyze() # reentrant works?
 
     def serv_times(self):
         if self.serv_rates != None:
@@ -262,36 +264,56 @@ def find_key(dic, val):
 
 def collide (tl):
     cpuof = {}
-    justmovedto = defaultdict(int)
-    cntcpu = {}
-    impending_coll = {}
+    lastocc = {}
+    cputids = defaultdict(set)
+    globcputids = defaultdict(set)
+    colls = defaultdict(bool)
+    first = {}
     for i,v in enumerate(tl):
         tid = v[1]
         cpu = v[2]
+        lastocc[tid] = v[0]
         oldcpu = cpuof[tid] if tid in cpuof else cpu
+        if not tid in cpuof: # first time seen
+            cputids[cpu].add(tid)
+            first[tid] = cpu
         cpuof[tid] = cpu
 
-        if tid in impending_coll and impending_coll[tid] == cpu:
-            print  "%d just moved to core of " % justmovedto[cpuof[tid]], find_key(cpuof, cpuof[tid]), ", index ", i
+        globcputids[cpu].add(tid)
+        # one hasn't worked elsewhere during that time
+        if cpu == oldcpu:
+            #check if anyone has moved to my pos since last
+            if first[tid] == cpu:
+                if len(cputids[cpu]) > 1 and not colls[tuple(cputids[cpu])]:
+                    print "%d: collision: %d" % (v[0],cpu), cputids[cpu]
+                    colls[tuple(cputids[cpu])] = True
+        if cpu != oldcpu:
+            cputids[oldcpu].remove(tid)
+            if len(cputids[oldcpu]) == 1:
+                first[list(cputids)[0]] = oldcpu
 
-        if tid in cpuof and oldcpu != cpu:
-            justmovedto[cpu] = tid
-            cntcpu[cpu] = 0
-        elif justmovedto[cpu] and justmovedto[cpu] != tid:
-            impending_coll[tid] = cpu
+            cputids[cpu].add(tid)
 
-                # someone else has moved to my core. -> collision
-                # but only collision if I work once more on this core and the other
-                # one hasn't worked elsewhere during that time
-            
-        if justmovedto[cpu] == tid and cpuof[tid] == cpu:
-            cntcpu[cpu] += 1
-            if cntcpu[cpu] > 500:
-                justmovedto[cpu] = 0 # no one has tid 0
-                cntcpu[cpu] = 0
-    print cntcpu, impending_coll
-        
+            if not len(cputids[cpu]) > 1:
+                # i'm first
+                first[tid] = cpu
 
+    print lastocc
+    print uniq(tl, 2)
+    print globcputids
+
+def uniq(tup_seq, idx):
+   # Not order preserving
+   keys = {}
+   for e in map(op.itemgetter(idx), tup_seq):
+       keys[e] = 1
+   return keys.keys()
+
+def simple_cpu_dic(n,ncore):
+    res = []
+    for i in range(n/ncore):
+        res.extend([i]*ncore)
+    return dict(zip(range(n),res))
         
 #state:
 #tid at cpu dic

@@ -1,6 +1,6 @@
 <table>
 <tr>
-<th>id</th><th>n_locked</th><th>n_owner_changed</th><th>nsec_locked_max</th><th>nsec_locked_total</th><th>count</th><th>avg locktime</th>
+<th>id</th><th>n_locked</th><th>n_owner_changed</th><th>nsec_locked_max</th><th>nsec_locked_total</th><th>avg locktime</th>
 </tr>
 {
 for $mx in root()/mutrace/mutex_list/mutex[data(n_owner_changed)>0]
