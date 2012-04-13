@@ -1,19 +1,20 @@
-
+#!/bin/sh
 MODE=0
 if [[ $# = 1 && "$1" = "-l" ]]; then
     MODE=1   
 fi
 
+SERVER=tintin
+LOCK=0 #clh
 
-#for i in 500 750 1000 1100 1150 1200 1250 1300 1350 1400 1500 1750 2000 10000 50000 100000; do 
-for i in 1000 5000 10000 20000 30000 40000 50000 60000 70000 80000 90000; do
+for i in 1 2 4 8 16 ;do
     if [[ $MODE = 1 ]]; then
-        scp -r kalkyl.uppmax.uu.se:locklocklock/lock_impl_bm/"$i" .
+        scp -r ${SERVER}:locklocklock/lock_impl_bm/"$i" .
         continue
     fi
         
-    if [ ! -d "$i" ]; then
+    if [ ! -d $i ]; then
 	mkdir $i
     fi
-    ./consprod -t 30 -c 0 -d -w$i,100000 -s100,100 && mv output* $i
+    ./consprod -n $i -t 60 -c $LOCK -w10000,10000 -s1000,1000 && mv output* $i
 done

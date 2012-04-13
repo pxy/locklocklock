@@ -7,7 +7,7 @@ all: 		consprod
 #use implicit rules
 
 #specific deps
-consprod: clh.o
+consprod: clh.o j_util.o
 
 clean:
 	$(RM) -f *.o consprod
