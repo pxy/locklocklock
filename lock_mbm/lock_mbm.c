@@ -8,6 +8,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <math.h>
+#include <inttypes.h>
 
 #include "hashtable.h"
 #include "clh.h"
@@ -23,7 +24,7 @@
 #define GHZ 2.270
 // number of threads used in exp.
 // has to be a multiple of 2
-#define NTHREADS 2
+#define NTHREADS 8
 
 //#define USE_THREADPINNING
 
@@ -35,7 +36,6 @@ void (* unlock_impl)(void *lock, int thread);
 int  (* next_cs_f)  (int mu);
 int  (* next_l_f)   (int mu);
 
-
 GArray *t_times[NTHREADS];
 
 char type;
@@ -44,7 +44,6 @@ gsl_rng *rng;
 uint64_t end;
 time_info_t current_ts[NTHREADS];
 thread_args_t threads[NTHREADS];
-static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
 
 #ifdef USE_THREADPINNING
@@ -66,16 +65,16 @@ int loop_limit = 0;
 //Hash table of locks
 struct hashtable *cache;
 
-static unsigned int
-hash_from_key_fn0 ( void *k ) {
-  int i = 0;
-  int hash = 0;
-  unsigned char* k;
-  for (i = 0; i < SHA1_LEN; i++) {
-    hash += *(k + i);
-  }
-  return hash;
-}
+/* static unsigned int */
+/* hash_from_key_fn0 ( void *k ) { */
+/*   int i = 0; */
+/*   int hash = 0; */
+/*   unsigned char* k; */
+/*   for (i = 0; i < SHA1_LEN; i++) { */
+/*     hash += *(k + i); */
+/*   } */
+/*   return hash; */
+/* } */
 
 static unsigned int 
 hash_from_key_fn1 ( void *k ) {
@@ -90,7 +89,7 @@ keys_equal_fn ( void *key1, void *key2 ) {
 
 void
 init_mb() {
-    cache = hashtable_create(53, hash_from_key_fn0, keys_equal_fn, FALSE);
+    cache = hashtable_create(53, hash_from_key_fn1, keys_equal_fn, FALSE);
     if(cache == NULL) {
 	printf("ERROR: Failed creating hashtable\n");
 	exit(1);
@@ -274,8 +273,11 @@ void* run(void *_args){
         while(read_tsc_p() - start < pause)
             ;
         /* critical section */
+
 	l = pick_lock(&args->class_info);
-        lock (l, args->tid);
+
+	lock (l, args->tid);
+	
         start = read_tsc_p();
         pause = next_cs_f(args->class_info.service_t);
 	while(read_tsc_p() - start < pause)
@@ -290,13 +292,13 @@ void* run(void *_args){
     return NULL;
 }
 
-void *
+pthread_mutex_t *
 pick_lock(class_t *class_info)
 {
     //int i = gsl_rng_uniform_int(rng, cache->len);
     unsigned int i = gsl_rng_get(rng);
     //TODO
-    void *l = (void *)hashtable_getlock(cache, (void *)i);
+    pthread_mutex_t *l = hashtable_getlock(cache, &i);
     return l;
 }
 
@@ -318,12 +320,14 @@ unlock(void *lock, int tid)
 }
 
 static int
-get_next_e(int mu) {
+get_next_e(int mu)
+{
     return (int) gsl_ran_exponential (rng, (double) mu);
 }
 
 int
-get_next_d(int mu) {
+get_next_d(int mu)
+{
     return (int) mu;
 }
 
@@ -358,17 +362,14 @@ set_lock_impl (int i)
         unlock_impl = &p_unlock;
         type = 'p';
     } else if (1 == i) {
-        lock_impl = &clh_lock;
-        unlock_impl = &clh_unlock;
+//        lock_impl = &clh_lock;
+//        unlock_impl = &clh_unlock;
         type = 'q';
     } else {
         return -1;
     }
     return 0;
 }
-
-
-
 
 
 
@@ -381,7 +382,8 @@ save_arr()
     char prefix[20];
     char stry[30], sacq[30], srel[30];
 
-    snprintf (prefix, sizeof prefix, "%s_%d_%c%s_%d", "output", NTHREADS, type, rng_type, runtime);
+    snprintf (prefix, sizeof prefix, "%s_%d_%c%s_%d", 
+	      "output", NTHREADS, type, rng_type, runtime);
     
     strcpy (stry, prefix);
     strcat (stry, "_try.dat");

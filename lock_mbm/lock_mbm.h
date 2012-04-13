@@ -15,7 +15,7 @@ typedef struct {
 
 int set_lock_impl(int);
 void *run(void *);
-void *pick_lock(class_t *class_info);
+pthread_mutex_t *pick_lock(class_t *class_info);
 static void lock(void *, int);
 static void unlock(void *, int);
 static int  get_next_d (int);
@@ -28,6 +28,11 @@ void save_arr(void);
 typedef void (* lock_fun_ptr_t)(void *lock, int thread);
 typedef int  (* rng_fun_ptr_t)(int rate);
 
+
+typedef struct {
+    void *lock;
+    unsigned int id;
+} lock_t;
 
 typedef struct {
     lock_fun_ptr_t init;
