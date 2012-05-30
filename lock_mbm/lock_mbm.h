@@ -1,33 +1,31 @@
 #ifndef _LOCK_MBM_H
 #define _LOCK_MBM_H
 
-#define SHA1_LEN 20
-
-#define handle_error_en(en, msg) \
-               do { errno = en; perror(msg); exit(EXIT_FAILURE); } while (0)
+typedef struct {
+    double *rout_m;
+    int *serv_m;
+} class_t;
 
 typedef struct {
-    int think_t;
-    int service_t;
-    int lock_group;
-} class_t;
+    //lock_t l[];
+    pthread_mutex_t *l;
+    int serv_t;
+} lockgroup_t;
 
 
 int set_lock_impl(int);
 void *run(void *);
 pthread_mutex_t *pick_lock(class_t *class_info);
-static void lock(void *, int);
-static void unlock(void *, int);
+static void lock(int lg_idx, int tid);
+static void unlock(int lg_idx, int tid);
 static int  get_next_d (int);
 static int  get_next_e (int);
-static void p_unlock(void *lock, int thread);
-static void p_lock(void *lock, int thread);
+static void p_unlock(void *lock);
+static void p_lock(void *lock);
 void save_arr(void);
-
 
 typedef void (* lock_fun_ptr_t)(void *lock, int thread);
 typedef int  (* rng_fun_ptr_t)(int rate);
-
 
 typedef struct {
     void *lock;

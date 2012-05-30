@@ -15,7 +15,7 @@
 #include "j_util.h"
 
 #if !defined (__linux__) || !defined(__GLIBC__)
-#error "This stuff only works on Linux!"
+#error "OS must be linux."
 #endif
 
 // kalkyl freq
@@ -26,6 +26,9 @@
 #define MHZ 3000
 #define GHZ 3.000
 
+//#define SLOPE 1 // constant service time
+#define SLOPE 1000 // service time slope increase by 1 microsec
+
 #define PIN_THREADS
 //#define COND_THRU
 
@@ -35,15 +38,9 @@ void (* unlock_impl)(int thread);
 int  (* next_cs_f)  (int mu);
 int  (* next_l_f)   (int mu);
 
-int set_lock_impl(int);
 void *run(void *);
-static void lock(int);
-static void unlock(int);
-static int  get_next_d (int);
-static int  get_next_e (int);
-static void p_unlock(int thread);
-static void p_lock(int thread);
 void save_arr(void);
+void print_proc_cx(void);
 
 
 char type;
@@ -51,8 +48,11 @@ char *rng_type;
 gsl_rng *rng;
 uint64_t end;
 /* one array of timestamp data for each thread */
+#ifdef SAVE_TS
 GArray **t_times;
+#endif
 time_info_t *current_ts;
+time_info_t *total_ts;
 thread_args_t *threads;
 static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -67,11 +67,14 @@ volatile int in_cs = 0;
 
 /* Number of threads to be used in experiment.
  * Has to be an exponent of 2, if using classes */
-
 int nthreads = 2;
 
 /* runtime of experiment in s */
 int runtime;
+
+/* used as a basic checksum of correctness */
+static volatile int ctrl;
+
 
 /* local think time, given in microsec */
 int think_c0 = 6000, think_c1 = 800;
@@ -80,6 +83,67 @@ int serv_c0 = 120000, serv_c1 = 180;
 int loop_limit = 0;
 
 
+
+/***************************************************************** 
+ * The actual microbenchmark.
+ * Each thread runs this function.
+ */
+void* 
+run(void *_args)
+{
+    thread_args_t * args = (thread_args_t*)_args;
+    uint64_t start;
+    int pause;
+    /* number of lock accesses */
+    int cnt = 0;
+
+#ifdef PIN_THREADS
+    pin(gettid(), cpu_map[args->tid]);
+#endif
+    do {
+        // think locally
+        start = read_tsc_p();
+        pause = next_l_f(args->class_info.think_t);
+        while(read_tsc_p() - start < pause)
+            ;
+
+        /* BEGIN critical section */
+        lock (args->tid);
+	ctrl++; // already protected
+        start = read_tsc_p();
+        pause = next_cs_f(args->class_info.service_t);
+	//pause += ctrl*args->t_inc_per_cnt;
+	while(read_tsc_p() - start < pause)
+            ;
+	cnt++;
+        unlock (args->tid);
+	/* END critical section */
+	
+    } while (read_tsc_p() < end);
+    /* end of measured execution */
+
+    int l_t = total_ts[args->tid].try / cnt;
+    int q_t = total_ts[args->tid].acq / cnt;
+    int s_t = total_ts[args->tid].rel / cnt;
+
+/*
+ * tid
+ * lock count
+ * interarrival time
+ * queue time
+ * service time
+ */
+    printf("%d %d %d %d %d\n", args->tid, cnt, l_t, q_t, s_t);
+
+    print_proc_cx();
+
+    return NULL;
+}
+
+
+
+
+/* parse options and setups experiment */
 int main(int argc, char *argv[]){
 
     class_t classes[2];
@@ -157,7 +221,6 @@ int main(int argc, char *argv[]){
         case '?':
             errexit = 1;
             break;
-
         default:
             puts("aborting");
             abort();
@@ -172,12 +235,22 @@ int main(int argc, char *argv[]){
     /* INIT */
     
     /* allocate */
+#ifdef SAVE_TS
     t_times    = (GArray **) malloc (sizeof (GArray *)*nthreads);
+#endif
     current_ts = (time_info_t *) malloc (sizeof(time_info_t)*nthreads);
+    total_ts   = (time_info_t *) malloc (sizeof(time_info_t)*nthreads);
     threads    = (thread_args_t *) malloc (sizeof(thread_args_t)*nthreads);
+    //memset(&total_ts, 0, (sizeof(time_info_t)*nthreads));
 #ifdef PIN_THREADS
     cpu_map    = (int*) malloc (sizeof(int)*nthreads);
 #endif 
+    for (int i = 0; i < nthreads; i++) {
+	total_ts[i].try = 0;
+	total_ts[i].acq = 0;
+	total_ts[i].rel = 0;
+    }
+
 
     clh_init(nthreads);
     if (NULL == (rng = gsl_rng_alloc(gsl_rng_mt19937))) {
@@ -185,12 +258,13 @@ int main(int argc, char *argv[]){
     }
     gsl_rng_set(rng, read_tsc_p());
 
+#ifdef SAVE_TS
     for (int i = 0; i < nthreads; i++)
         t_times[i] = g_array_sized_new(FALSE, 
 				       TRUE, 
 				       sizeof (time_info_t), 
 				       runtime*5000);
-
+#endif
 
     /***** SETUP *****/
     // stop experiment when time end (in cycles) is reached
@@ -205,25 +279,25 @@ int main(int argc, char *argv[]){
     
 #ifdef PIN_THREADS
     // define how the threads should be pinned to cores
-    for (int i = 0; i<nthreads; i++) {
+    for (int i = 0; i<nthreads; i++) 
 	cpu_map[i] = i;
-    }
 #endif
-
-    printf("think time, c0:%d, c1:%d\n", 
-	   classes[0].think_t, 
-	   classes[1].think_t);
 
     int64_t start = read_tsc_p();
     /* SPAWN */
     for (int i = 0; i < nthreads; i++) {
         thread_args_t *t = &threads[i];
         t->tid = i;
+        /* how much should the service time increase
+	 * per lock access */
+	t->t_inc_per_cnt = SLOPE;
+	/* which of the two classes does this thread
+	 * belong to? */
         t->class_info = classes[i % 2];
+
         if (pthread_create(&t->thread, NULL, &run, t))
             return (EXIT_FAILURE);
     }
-    
 
     /* JOIN */
     for (int i = 0; i < nthreads; i++)
@@ -231,19 +305,26 @@ int main(int argc, char *argv[]){
 
     int64_t end = read_tsc_p();
 
-    printf("Total time: %ld\n", end - start);
+    fprintf (stderr, "checksum value: %d\n", ctrl);
+    fprintf(stderr, "# total time: %ld\n", end - start);
 
+#ifdef SAVE_TS
     save_arr();
+#endif
 
     /* CLEANUP */
+#ifdef SAVE_TS
     for (int i = 0; i < nthreads; i++)
         g_array_free(t_times[i], FALSE);
-
+#endif
     gsl_rng_free(rng);
 
 /* free */
+#ifdef SAVE_TS
     free(t_times);
+#endif
     free(current_ts);
+    free(total_ts);
     free(threads);
 #ifdef PIN_THREADS
     free(cpu_map);
@@ -254,43 +335,6 @@ int main(int argc, char *argv[]){
 }
 
 
-/*
- * Each thread runs this.
- */
-void* run(void *_args){
-    thread_args_t * args = (thread_args_t*)_args;
-    uint64_t start;
-    int pause;
-    /* number of lock accesses */
-    int cnt = 0;
-
-#ifdef PIN_THREADS
-    pin(gettid(), cpu_map[args->tid]);
-#endif
-
-    do {
-        // think locally
-        start = read_tsc_p();
-        pause = next_l_f(args->class_info.think_t);
-        while(read_tsc_p() - start < pause)
-            ;
-
-        /* BEGIN critical section */
-        lock (args->tid);
-        start = read_tsc_p();
-        pause = next_cs_f(args->class_info.service_t);
-	while(read_tsc_p() - start < pause)
-            ;
-	cnt++;
-        unlock (args->tid);
-	/* END critical section */
-	
-    } while (read_tsc_p() < end);
-    /* end of measured execution */
-    
-    printf("tid: %d, cnt: %d\n", args->tid, cnt);
-    return NULL;
-}
 
 /* lock/unlock functions, including timing */
 void 
@@ -299,6 +343,9 @@ lock(int tid)
     current_ts[tid].try = read_tsc_p();
     lock_impl(tid);
     current_ts[tid].acq = read_tsc_p();
+    // local comp time
+    if (current_ts[tid].rel > 0) 
+	total_ts[tid].try += current_ts[tid].try - current_ts[tid].rel;
 }
 
 void
@@ -306,7 +353,14 @@ unlock(int tid)
 {
     unlock_impl(tid);
     current_ts[tid].rel = read_tsc_p();
+#ifdef SAVE_TS
     g_array_append_val (t_times[tid], current_ts[tid]);
+#endif
+    // queue time
+    total_ts[tid].acq += current_ts[tid].acq - current_ts[tid].try;
+    // service time
+    total_ts[tid].rel += current_ts[tid].rel - current_ts[tid].acq;
+
 }
 
 static int
@@ -388,6 +442,7 @@ save_arr()
         return;
     }
 
+#ifdef SAVE_TS
     for (int i = 0; i < nthreads; i++) {
         for (int j = 0; j < t_times[i]->len; j++) {
             ti = g_array_index(t_times[i], time_info_t, j);
@@ -396,7 +451,28 @@ save_arr()
             fprintf (fp_rel, "%ld %d 0\n", ti.rel, i);
         }
     }
+#endif
     fclose(fp_try);
     fclose(fp_acq);
     fclose(fp_rel);
 }
+
+
+void
+print_proc_cx ()
+{
+    FILE *filePtr;
+    char sBuf[65536];
+    char *path = "/proc/self/status";
+    E_0(filePtr = fopen(path, "r"));
+
+    int n;
+    while ((n = fread(sBuf, 1, sizeof(sBuf), filePtr))) {
+	fwrite(sBuf, 1, n, stderr);
+    }
+
+    fclose (filePtr);
+}
+
+
+

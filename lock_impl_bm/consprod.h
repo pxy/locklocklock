@@ -5,6 +5,15 @@
 typedef void (* lock_fun_ptr_t)(int thread);
 typedef int  (* rng_fun_ptr_t)(int rate);
 
+int set_lock_impl(int);
+static void lock(int);
+static void unlock(int);
+static int  get_next_d (int);
+static int  get_next_e (int);
+static void p_unlock(int thread);
+static void p_lock(int thread);
+
+
 typedef struct {
     int think_t;
     int service_t;
@@ -19,6 +28,7 @@ typedef struct {
 typedef struct {
     pthread_t thread;
     int tid;
+    int t_inc_per_cnt;
     class_t class_info;
     rng_fun_ptr_t next_f;
 } thread_args_t;

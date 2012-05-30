@@ -3,6 +3,13 @@
 
 #include <errno.h>
 #include <stdio.h>
+#include <stdint.h>
+
+
+#define dprintf(...)                            \
+    if (DEBUG)					\
+	printf(__VA_ARGS__)                        
+
 
 #define E(c)					\
     do {					\
@@ -28,6 +35,26 @@
 	    perror("E_0");			\
 	}					\
     } while (0)
+
+
+#if defined(__x86_64__)
+
+static inline uint64_t __attribute__((always_inline))
+read_tsc_p()
+{
+   uint64_t tsc;
+   __asm__ __volatile__ ("rdtscp\n"
+	 "shl $32, %%rdx\n"
+	 "or %%rdx, %%rax"
+	 : "=a"(tsc)
+	 :
+	 : "%rcx", "%rdx");
+   return tsc;
+}
+#else
+#error Unsupported architecture
+#endif
+
 
 extern pid_t gettid (void);
 
