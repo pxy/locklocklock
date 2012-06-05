@@ -9,11 +9,13 @@
 #include <string.h>
 #include <math.h>
 #include <inttypes.h>
-
+#include <assert.h>
+#include <malloc.h>
 #include "clh.h"
 #include "lock_mbm.h"
 #include "j_util.h"
-#include "stream_cluster.h"
+//#include "streamcluster.h"
+#include "bodytrack.h"
 
 
 #if !defined (__linux__) || !defined(__GLIBC__)
@@ -21,7 +23,8 @@
 #endif
 
 #define DEBUG 0
-#define SAVE_TS 1
+#define NDEBUG  // no asserts
+//#define SAVE_TS 0
 #define PIN_THREADS
 
 // kalkyl freq
@@ -32,53 +35,47 @@
 //#define MHZ 3000
 //#define GHZ 3.000
 
-void (* lock_impl)  (void *l);
-void (* unlock_impl)(void *l);
-int  (* next_cs_f)  (int mu);
-int  (* next_l_f)   (int mu);
-
-void *run(void *);
-void save_arr(void);
-void print_proc_cx(void);
-
+/* global vars */
 char type;
 char *rng_type;
-gsl_rng *rng;
 uint64_t end;
-
 /* one array of timestamp data for each thread */
 #ifdef SAVE_TS
 GArray **t_times;
 #endif
 time_info_t *current_ts;
 thread_args_t *threads;
-
 #ifdef PIN_THREADS
 int *cpu_map;
-#endif
-
-#ifdef COND_THRU
-volatile int in_cs = 0;
 #endif
 
 /* runtime of experiment in s */
 int runtime;
 int loop_limit = 0;
 
+/* set up settings for microbenchmark, service times etc. */
+
 #if ! (defined(NCLASS) && defined(NTHREADS) && defined(NLGS))
-#error define!
+#error parameters undefined!
 #endif 
 
 extern int class_threads[];
-extern double routs[][NLGS][NLGS];
-extern int servs[][2*NLGS][2*NLGS];
+extern int routs[][NLGS][2];
+extern int servs[][2*NLGS];
 
-#define M_IDX(mx, row, col) ((mx)[(col) + NLGS * (row)])
-//HACK
-#define M_IDX_2(mx, row, col) ((mx)[(col) + 2*NLGS * (row)])
+#define ROUT_IDX(mx, row, col) ((mx)[(col) + 2 * (row)])
+
+#define NEXT_CS_T(mu, tid) get_next_e(mu, tid)
+#define NEXT_L_T(mu, tid) get_next_e(mu, tid)
+#define LOCK_IMPL(lockp, tid) clh_lock(lockp, tid)
+#define UNLOCK_IMPL(lockp, tid) clh_unlock(lockp, tid)
+
+//#define LOCK_IMPL(lockp, tid) p_lock(lockp, tid)
+//#define UNLOCK_IMPL(lockp, tid) p_unlock(lockp, tid)
+
 
 /* current state */
-int pos[NTHREADS];
+extern int pos[NTHREADS];
 lockgroup_t lockgroups [NLGS];
 class_t classes [NCLASS];
 int nthreads = NTHREADS;
@@ -87,45 +84,69 @@ void
 init_lg(lockgroup_t *lg) {
     //E_0(lg->l = (pthread_mutex_t *) malloc (sizeof (pthread_mutex_t)));
     //E(pthread_mutex_init(lg->l, NULL));
+    lg->l = (clh_lock_t *)memalign(64, sizeof(clh_lock_t));
+    clh_init(lg->l, nthreads);
+    dprintf("lg initialised.\n");
+}
+
+void
+fini_lg(lockgroup_t *lg) {
+    //E(pthread_mutex_destroy(lg->l));
+    clh_destroy(lg->l);
+    free(lg->l);
 }
 
 void
 init_mb() {
-    init_lg(&lockgroups[0]);
-    //init_lg(&lockgroups[1]);
-
+    for (int i = 0; i < NLGS; i++) {
+	init_lg(&lockgroups[i]);
+    }
     for (int i = 0; i < NCLASS; i++) {
-	classes[i].rout_m = (double *) &routs[i];
-	classes[i].serv_m = (int *) &servs[i];
+	classes[i].rout_m = (int *) routs[i];
+	classes[i].serv_m = servs[i];
+	// inflate lock holding time
+	for (int j = 0; j < NLGS; j++) {
+	    classes[i].serv_m[2*j] *= 3;
+	}
     }
 }
 
 void
 fini_mb() {
+    for (int i = 0; i < NLGS; i++) {
+	fini_lg(&lockgroups[i]);
+    }
 }
 
 int
 local_t (thread_args_t *ta, int lidx)
 {
     int p = pos[ta->tid];
-    return next_l_f(M_IDX_2(ta->class_info.serv_m,2*p+1,lidx));
+    assert(ta->class_info.serv_m[2*p] > 0);
+    return NEXT_L_T(ta->class_info.serv_m[2*p+1], ta->tid);
 }
 
 int
 cs_t (thread_args_t *ta, int lidx)
 {
     int p = pos[ta->tid];
-    return next_l_f(M_IDX(ta->class_info.serv_m,2*p,0));
+    assert(ta->class_info.serv_m[2*p] > 0);
+    return NEXT_CS_T(ta->class_info.serv_m[2*p], ta->tid);
 }
 
 int
-select_lock(thread_args_t *ta)
+select_lock (thread_args_t *ta)
 {
     int p = pos[ta->tid];
-    // FIX
-    // generate int with prob from rout
-    //return ta->class_info.rout_m[p][0];
-    pos[ta->tid] = (p + 1) % NLGS;
+    dprintf("pos cnt : %d\n", ta->pos_cnt);
+    (ta->pos_cnt)--;
+
+    // if it's time to switch lock
+    if (0 >= ta->pos_cnt) {
+	pos[ta->tid] = ROUT_IDX(ta->class_info.rout_m,p,0);
+	ta->pos_cnt  = ROUT_IDX(ta->class_info.rout_m,pos[ta->tid],1);
+    }
+    // otherwise, stay
     return pos[ta->tid];
 }
 
@@ -146,6 +167,10 @@ run(void *_args)
 #ifdef PIN_THREADS
     pin(gettid(), cpu_map[args->tid]);
 #endif
+
+    // calibrate for the first local computation time
+    current_ts[args->tid].rel = read_tsc_p();
+
     do {
         // think locally
         start = read_tsc_p();
@@ -160,7 +185,6 @@ run(void *_args)
 	cnt++;
 	while(read_tsc_p() - start < pause)
             ;
-
 	unlock (lidx, args->tid);
 	/* END critical section */
     } while (read_tsc_p() < end);
@@ -178,18 +202,9 @@ main(int argc, char *argv[]){
     extern char *optarg;
     extern int optind, optopt;
 
-    int d_type;
-    /* default time gen: exponential */
-    next_cs_f = &get_next_e;
-    next_l_f  = &get_next_e;
-    rng_type  = "ee";
     /* Read options/settings */
-    while ((opt = getopt(argc, argv, "c:t:d:l:")) != -1) {
+    while ((opt = getopt(argc, argv, "t:l:")) != -1) {
         switch (opt) {
-        case 'c':
-	    if (set_lock_impl(atoi(optarg)) < 0)
-                errexit = 1;
-            break;
 	case 'l':
 	    if ((loop_limit = atoi(optarg)) <= 0)
 		errexit = 1;
@@ -203,26 +218,6 @@ main(int argc, char *argv[]){
                         optarg);
                 errexit = 1;
             }
-            break;
-        case 'd':
-
-	  d_type = atoi(optarg);
-	  if (d_type < 0 || d_type > 1){
-	    fprintf(stderr,
-		    "Invalid argument '%s'.",
-		    optarg);
-	    errexit = 1;
-
-	  }
-	  else if (d_type == 0) {
-            next_cs_f = &get_next_d;
-	    next_l_f  = &get_next_d;
-            rng_type  = "dd";
-	  } else {
-	    next_cs_f = &get_next_d;
-	    next_l_f  = &get_next_e;
-	    rng_type  = "de";
-	  }
             break;
             //case 'h':
             //usage(stdout, argv[0]);
@@ -252,7 +247,6 @@ main(int argc, char *argv[]){
 #endif
 
     init_mb();
-    clh_init(nthreads);
 
 #ifdef SAVE_TS
     t_times    = (GArray **) malloc (sizeof (GArray *)*nthreads);
@@ -262,12 +256,6 @@ main(int argc, char *argv[]){
 				       sizeof (time_info_t), 
 				       runtime*5000);
 #endif
-
-
-    if (NULL == (rng = gsl_rng_alloc(gsl_rng_mt19937))) {
-        perror("gsl_rng_alloc");
-    }
-    gsl_rng_set(rng, read_tsc_p());
 
     /***** SETUP *****/
     // stop experiment when time end (in cycles) is reached
@@ -288,7 +276,19 @@ main(int argc, char *argv[]){
     for (int i = 0; i < nthreads; i++) {
         thread_args_t *t = &threads[i];
         t->tid = i;
+	if (NULL == (threads[i].rng = gsl_rng_alloc(gsl_rng_mt19937))) {
+	    perror("gsl_rng_alloc");
+	}
+	gsl_rng_set(threads[i].rng, read_tsc_p()+i); // salt it!!?
 
+	threads[i].l_ts = (l_ts_t *)malloc(sizeof(l_ts_t) * NLGS);
+	
+	for (int j = 0; j < NLGS; j++) {
+	    threads[i].l_ts[j].lc_t = 0;
+	    threads[i].l_ts[j].s_t = 0;
+	    threads[i].l_ts[j].cs_t = 0;
+	}
+	
 	/* which class does this thread belong to? */
         t->class_info = classes[class_threads[i]];
 
@@ -303,23 +303,68 @@ main(int argc, char *argv[]){
     int64_t end = read_tsc_p();
 
     fprintf(stderr, "# total time: %ld\n", end - start);
-    dprintf("end time: %"PRId64"\n", end);
 
+#ifdef SAVE_TS
     save_arr();
-    
+#endif
+    printf("queue time : \n");
+    for (int i = 0; i < nthreads; i++) {
+	for (int j = 0; j < NLGS; j++) {
+	    int cnt = threads[i].l_ts[j].c;
+	    if (cnt > 0)
+		printf("%"PRId64" ", threads[i].l_ts[j].cs_t/cnt);
+	    else
+		printf("0 ");
+	}
+	printf("\n");
+    } 
+    printf("service time : \n");
+    for (int i = 0; i < nthreads; i++) {
+	for (int j = 0; j < NLGS; j++) {
+	    int cnt = threads[i].l_ts[j].c;
+	    if (cnt > 0) {
+		printf("%"PRId64" ", threads[i].l_ts[j].lc_t/cnt);
+		printf("%"PRId64" ", threads[i].l_ts[j].s_t/cnt);
+	    }
+	    else
+		printf("0 0 ");
+	}
+	printf("\n");
+    } 
+
+
+    printf("total contention : ");
+    uint64_t tot = 0;
+    for (int i = 0; i < nthreads; i++) {
+	for (int j = 0; j < NLGS; j++) {
+	    tot += threads[i].l_ts[j].cs_t;
+	}
+    } 
+    printf("%"PRId64" per thread\n", tot/nthreads);
+
+
+    printf("Count : \n");
+    for (int i = 0; i < nthreads; i++) {
+	for (int j = 0; j < NLGS; j++) {
+	    printf("%"PRId64" ", threads[i].l_ts[j].c);
+	}
+	printf("\n");
+    }
     
 
 /* free */
 
     /* CLEANUP */
-#ifdef SAVE_TS
-    for (int i = 0; i < nthreads; i++)
-        g_array_free(t_times[i], FALSE);
-    free(t_times);
-#endif
-
     free(current_ts);
-    gsl_rng_free(rng);
+
+    for (int i = 0; i < nthreads; i++) {
+	gsl_rng_free(threads[i].rng);
+	free(threads[i].l_ts);
+#ifdef SAVE_TS
+	g_array_free(t_times[i], FALSE);
+	free(t_times);
+#endif
+    }
 
     free(threads);
 
@@ -327,7 +372,6 @@ main(int argc, char *argv[]){
 #ifdef PIN_THREADS
     free(cpu_map);
 #endif 
-    clh_fini();
     fini_mb();
     return(EXIT_SUCCESS);
 }
@@ -336,67 +380,70 @@ main(int argc, char *argv[]){
 void
 lock(int lg_idx, int tid) 
 {
-    current_ts[tid].try = read_tsc_p();
-    //lock_impl(lockgroups[lg_idx].l);
-    lock_impl((void *)&tid);
+    uint64_t start, end;
+    start = read_tsc_p();
+    LOCK_IMPL(lockgroups[lg_idx].l, tid);
+    end = read_tsc_p();
+    threads[tid].l_ts[lg_idx].cs_t += end - start;
+    threads[tid].l_ts[lg_idx].c++;
+    threads[tid].l_ts[lg_idx].lc_t += start - current_ts[tid].rel;
+
+#ifdef SAVE_TS    
+    current_ts[tid].try = start;
+    current_ts[tid].acq = end;
+#endif
+// FIX for serv time
     current_ts[tid].acq = read_tsc_p();
+
 }
 
 void
 unlock(int lg_idx, int tid)
 {
-    //unlock_impl(lockgroups[lg_idx].l);
-    unlock_impl((void *) &tid);
+    uint64_t end;
+    
+    UNLOCK_IMPL(lockgroups[lg_idx].l, tid);
+    end = read_tsc_p();
+    threads[tid].l_ts[lg_idx].s_t += end - current_ts[tid].acq;
+
     current_ts[tid].rel = read_tsc_p();
 #ifdef SAVE_TS
+    current_ts[tid].lock = lg_idx;
     g_array_append_val (t_times[tid], current_ts[tid]);
 #endif
+
 
 }
 
 static int
-get_next_e(int mu) {
-    return (int) gsl_ran_exponential (rng, (double) mu);
+get_next_e(int mu,int tid) {
+    return (int) gsl_ran_exponential (threads[tid].rng, (double) mu);
+}
+
+static int
+get_next_u(int mu, int tid) {
+    return (int) 0;
 }
 
 int
-get_next_d(int mu) {
+get_next_d(int mu, int tid) {
     return (int) mu;
 }
 
 /* pthread mutex wrappers */
 static void
-p_lock(void *l)
+p_lock(void *l, int tid)
 {
     E_en(pthread_mutex_lock((pthread_mutex_t *)l) != 0);
 }
 
 static void
-p_unlock(void *l)
+p_unlock(void *l, int tid)
 {
     E_en(pthread_mutex_unlock((pthread_mutex_t *)l) != 0);
 }
 /* END pthread mutex wrappers */
 
-/* Selects which lock implementation is to be used, (p)threads (0) or
- * (q)ueue lock (1)
- */
-int
-set_lock_impl (int i)
-{
-    if (0 == i) {
-        lock_impl = &p_lock;
-        unlock_impl = &p_unlock;
-        type = 'p';
-    } else if (1 == i) {
-        lock_impl = &clh_lock;
-        unlock_impl = &clh_unlock;
-        type = 'q';
-    } else {
-        return -1;
-    }
-    return 0;
-}
 
 
 /* print collected data to files */
@@ -436,9 +483,9 @@ save_arr()
     for (int i = 0; i < nthreads; i++) {
         for (int j = 0; j < t_times[i]->len; j++) {
             ti = g_array_index(t_times[i], time_info_t, j);
-            fprintf (fp_try, "%ld %d 0\n", ti.try, i);
-            fprintf (fp_acq, "%ld %d 0\n", ti.acq, i);
-            fprintf (fp_rel, "%ld %d 0\n", ti.rel, i);
+            fprintf (fp_try, "%ld %d %d\n", ti.try, i, ti.lock);
+            fprintf (fp_acq, "%ld %d %d\n", ti.acq, i, ti.lock);
+            fprintf (fp_rel, "%ld %d %d\n", ti.rel, i, ti.lock);
         }
     }
 #endif

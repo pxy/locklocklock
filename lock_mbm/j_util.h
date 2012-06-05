@@ -51,6 +51,15 @@ read_tsc_p()
 	 : "%rcx", "%rdx");
    return tsc;
 }
+
+static inline void __attribute__((always_inline))
+asm_atomic_inc_int32(int32_t *var)
+{
+    __asm__ ("lock incl %0;"
+	     : "+m" (*var));
+}
+
+
 #else
 #error Unsupported architecture
 #endif
