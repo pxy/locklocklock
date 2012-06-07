@@ -15,16 +15,16 @@
 #include "lock_mbm.h"
 #include "j_util.h"
 //#include "streamcluster.h"
-#include "bodytrack.h"
-//#include "bodytrack_eq_serv.h"
-
+//#include "bodytrack.h"
+#include "bodytrack_eq_serv.h"
+//#include "fluidanimate.h"
 
 #if !defined (__linux__) || !defined(__GLIBC__)
 #error "OS must be linux."
 #endif
 
 #define DEBUG 0
-#define NDEBUG  // no asserts
+//#define NDEBUG  // no asserts
 //#define SAVE_TS 0
 #define PIN_THREADS
 
@@ -37,8 +37,6 @@
 //#define GHZ 3.000
 
 /* global vars */
-char type;
-char *rng_type;
 uint64_t end;
 /* one array of timestamp data for each thread */
 #ifdef SAVE_TS
@@ -63,6 +61,7 @@ int loop_limit = 0;
 int class_nths[NCLASS];
 extern int nlocks_lg[NLGS];
 extern int routs[][NLGS][2];
+extern double rout2[][NLGS][NLGS];
 extern int servs[][2*NLGS];
 
 #define ROUT_IDX(mx, row, col) ((mx)[(col) + 2 * (row)])
@@ -75,23 +74,16 @@ extern int servs[][2*NLGS];
 //#define LOCK_IMPL(lockp, tid) p_lock(lockp, tid)
 //#define UNLOCK_IMPL(lockp, tid) p_unlock(lockp, tid)
 
-
 /* current state */
 extern int init_pos[NCLASS];
 lockgroup_t lockgroups [NLGS];
 class_t classes [NCLASS];
 int nthreads;
 int multiplier;
-
+gsl_ran_discrete_t *routs2[NCLASS][NLGS];
 
 void
 init_lg(lockgroup_t *lg, int idx) {
-    //E_0(lg->l = (pthread_mutex_t *) malloc (sizeof (pthread_mutex_t)));
-    //E(pthread_mutex_init(lg->l, NULL));
-
-    //lg->l = (clh_lock_t *)memalign(64, sizeof(clh_lock_t));
-    //clh_init(lg->l, nthreads);
-
     lg->nlocks = nlocks_lg[idx];
     E_0(lg->threads = (int *)malloc(sizeof(int)*nthreads));
     lg->l = (clh_lock_t *)memalign(64, sizeof(clh_lock_t) * nlocks_lg[idx]);
@@ -103,26 +95,30 @@ init_lg(lockgroup_t *lg, int idx) {
 
 void
 fini_lg(lockgroup_t *lg) {
-    //E(pthread_mutex_destroy(lg->l));
-
-    //clh_destroy(lg->l);
-    //free(lg->l);
     for (int i = 0; i < lg->nlocks; i++) {
 	clh_destroy(&lg->l[i]);
-	free(&lg->l[i]);
     }
+    free(lg->l);
+
 }
+
 
 void
 init_mb() {
     nthreads = 0;
     for (int i = 0; i < NCLASS; i++) {
 	nthreads += class_nths[i];
+	for (int j = 0; j < NLGS; j++) {
+	    routs2[i][j] = gsl_ran_discrete_preproc(NLGS, rout2[i][j]);
+	}
+	classes[i].rout = routs2[i];
     }
+    printf("running with %d threads.\n", nthreads);
+    
     for (int i = 0; i < NLGS; i++) {
-	//init_lg(&lockgroups[i]);
 	init_lg(&lockgroups[i], i);
     }
+
     for (int i = 0; i < NCLASS; i++) {
 	classes[i].rout_m = (int *) routs[i];
 	classes[i].serv_m = servs[i];
@@ -135,6 +131,12 @@ init_mb() {
 
 void
 fini_mb() {
+
+    for (int i = 0; i < NCLASS; i++) {
+	for (int j = 0; j < NLGS; j++) {
+//	    gsl_ran_discrete_free (routs2[i][j]);
+	}
+    }
     for (int i = 0; i < NLGS; i++) {
 	fini_lg(&lockgroups[i]);
     }
@@ -206,20 +208,16 @@ run(void *_args)
         /* BEGIN critical section */
 	lock (lidx, args);
         start = read_tsc_p();
-
 	cnt++;
 	while(read_tsc_p() - start < pause_cs)
             ;
 	unlock (lidx, args->tid);
 	/* END critical section */
+	dprintf("Tid %d finished lock unlock seq.", args->tid);
     } while (read_tsc_p() < end);
     /* end of measured execution */
     return NULL;
 }
-
-
-
-
 
 /* parse options and setups experiment */
 int 
@@ -325,19 +323,20 @@ main(int argc, char *argv[]){
 
         thread_args_t *t = &threads[i];
         t->tid = i;
-	if (NULL == (threads[i].rng = gsl_rng_alloc(gsl_rng_mt19937))) {
+	if (NULL == (t->rng = gsl_rng_alloc(gsl_rng_mt19937))) {
 	    perror("gsl_rng_alloc");
 	}
-	gsl_rng_set(threads[i].rng, read_tsc_p()+i); // salt it!!?
+	gsl_rng_set(t->rng, read_tsc_p()+i); // salt it!!?
 
-	threads[i].l_ts = (l_ts_t *)malloc(sizeof(l_ts_t) * NLGS);
+	t->l_ts = (l_ts_t *)malloc(sizeof(l_ts_t) * NLGS);
 	
 	for (int j = 0; j < NLGS; j++) {
-	    threads[i].l_ts[j].lc_t = 0;
-	    threads[i].l_ts[j].s_t = 0;
-	    threads[i].l_ts[j].cs_t = 0;
+	    t->l_ts[j].lc_t = 0;
+	    t->l_ts[j].s_t = 0;
+	    t->l_ts[j].cs_t = 0;
+	    t->l_ts[j].c = 0;
 	}
-	
+
 	/* which class does this thread belong to? */
         t->class_info = classes[cur_class];
 	t->pos = init_pos[cur_class];
@@ -357,6 +356,8 @@ main(int argc, char *argv[]){
 #ifdef SAVE_TS
     save_arr();
 #endif
+
+
     int old_i = 0;
     int class = 0;
     printf("queue time : \n[[");
@@ -405,7 +406,7 @@ main(int argc, char *argv[]){
 		    printf("],\n");
 		    old_i = i + 1;
 		    class ++;
-		    if (i < nthreads) printf("[");
+		    if (i + 1 < nthreads) printf("[");
 		}
 
 	    }
@@ -418,26 +419,6 @@ main(int argc, char *argv[]){
     }
     printf("]\n");
 
-
-    printf("total contention : ");
-    uint64_t tot = 0;
-    for (int i = 0; i < nthreads; i++) {
-	for (int j = 0; j < NLGS; j++) {
-	    tot += threads[i].l_ts[j].cs_t;
-	}
-    }
-
-
-    printf("%"PRId64" per thread\n", tot/nthreads);
-
-    printf("Count : \n");
-    for (int i = 0; i < nthreads; i++) {
-	for (int j = 0; j < NLGS; j++) {
-	    printf("%d ", threads[i].l_ts[j].c);
-	}
-	printf("\n");
-    }
-    
 
 /* free */
 
@@ -470,9 +451,10 @@ pick_lock_lg(lockgroup_t *lg, thread_args_t *ta)
     //FIX select idx
     int idx = 0;
     if (lg->nlocks > 1) {
+	dprintf("lg nlocks > 1");
 	idx = gsl_rng_uniform_int (ta->rng, lg->nlocks);
-	lg->threads[ta->tid] = idx;
     }
+    lg->threads[ta->tid] = idx;
     return (void *) &lg->l[idx];
 }
 
@@ -487,14 +469,14 @@ lock(int lg_idx, thread_args_t *ta)
 {
     uint64_t start, end;
     // LG
+    dprintf("lock lg_idx: %d\n", lg_idx);
     void *l = pick_lock_lg(&lockgroups[lg_idx], ta);
     start = read_tsc_p();
-    //LOCK_IMPL(lockgroups[lg_idx].l, tid);
     LOCK_IMPL(l, ta->tid);
     end = read_tsc_p();
-    threads[ta->tid].l_ts[lg_idx].cs_t += end - start;
-    threads[ta->tid].l_ts[lg_idx].c++;
-    threads[ta->tid].l_ts[lg_idx].lc_t += start - current_ts[ta->tid].rel;
+    ta->l_ts[lg_idx].cs_t += end - start;
+    ta->l_ts[lg_idx].c++;
+    ta->l_ts[lg_idx].lc_t += start - current_ts[ta->tid].rel;
 
 #ifdef SAVE_TS    
     current_ts[ta->tid].try = start;
@@ -502,7 +484,6 @@ lock(int lg_idx, thread_args_t *ta)
 #endif
 // FIX for serv time
     current_ts[ta->tid].acq = read_tsc_p();
-
 }
 
 void
@@ -510,18 +491,18 @@ unlock(int lg_idx, int tid)
 {
     uint64_t end;
     // LG
+    dprintf("unlock lg_idx: %d\n", lg_idx);
     void *l = pick_unlock_lg(&lockgroups[lg_idx], tid);
-    //UNLOCK_IMPL(lockgroups[lg_idx].l, tid);
     UNLOCK_IMPL(l, tid);
     end = read_tsc_p();
     threads[tid].l_ts[lg_idx].s_t += end - current_ts[tid].acq;
 
     current_ts[tid].rel = read_tsc_p();
+
 #ifdef SAVE_TS
     current_ts[tid].lock = lg_idx;
     g_array_append_val (t_times[tid], current_ts[tid]);
 #endif
-
 
 }
 
@@ -566,8 +547,8 @@ save_arr()
     char stry[30], sacq[30], srel[30];
 
     snprintf (prefix, sizeof prefix, 
-	      "%s_%d_%c%s", "output", 
-	      nthreads, type, rng_type);
+	      "%s_%d", "output", 
+	      nthreads);
     
     strcpy (stry, prefix);
     strcat (stry, "_try.dat");

@@ -6,6 +6,7 @@
 #include "clh.h"
 
 typedef struct {
+    gsl_ran_discrete_t **rout;
     int *rout_m;
     int *serv_m;
 } class_t;
