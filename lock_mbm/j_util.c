@@ -16,7 +16,6 @@ pin(pid_t t, int cpu) {
   cpu_set_t cpuset;
   CPU_ZERO(&cpuset);
   CPU_SET(cpu, &cpuset);
-  //E_en(pthread_setaffinity_np(t, sizeof(cpu_set_t), &cpuset));
   E_en(sched_setaffinity(t, sizeof(cpu_set_t), &cpuset));
   fprintf(stderr, "%d pinned to %d\n", (int)t, cpu);
   

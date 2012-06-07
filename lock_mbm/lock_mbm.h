@@ -19,15 +19,26 @@ typedef struct {
 
 
 typedef struct {
-    //lock_t l[];
-    //pthread_mutex_t *l;
+    int nlocks;
+    int *threads;
     clh_lock_t *l;
-    int serv_t;
 } lockgroup_t;
+
+
+typedef struct {
+    pthread_t thread;
+    int tid;
+    class_t class_info;
+    int pos_cnt;
+    int pos;
+    gsl_rng *rng;
+    l_ts_t *l_ts;
+} thread_args_t;
+
 
 void print_proc_cx(void);
 void *run(void *);
-static void lock(int lg_idx, int tid);
+static void lock (int lg_idx, thread_args_t *ta);
 static void unlock(int lg_idx, int tid);
 static int  get_next_d (int, int);
 static int  get_next_e (int, int);
@@ -40,15 +51,6 @@ typedef struct {
     unsigned int id;
 } lock_t;
 
-
-typedef struct {
-    pthread_t thread;
-    int tid;
-    class_t class_info;
-    int pos_cnt;
-    gsl_rng *rng;
-    l_ts_t *l_ts;
-} thread_args_t;
 
 typedef struct {
     uint64_t try;
