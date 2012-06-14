@@ -1,5 +1,5 @@
 """SLAP-
-$ Time-stamp: <2012-06-13 15:12:25 jonatanlinden>
+$ Time-stamp: <2012-06-14 10:12:36 jonatanlinden>
 
 README:
 A collection of tools to do a queueing network analysis on sequences
@@ -326,7 +326,7 @@ def est_wait_vs_meas_wait(lt, stage):
     
 
 def avg_malloc_memcpy(name, before_ts):
-    return np.average([(b-a, c-b) for (a,b,c) in takewhile(lambda x: x[0] < before_ts, unpack_timeline('/Users/jonatanlinden/Documents/dedup_meas/halvan/memcont/exclusive/stage_alloc_cpu/memcpy_no_search/mem_time/dedup.random.ts_chunk_'+name+'.bin', 3))], axis=0)
+    return np.average([(b-a, c-b) for (a,b,c) in takewhile(lambda x: x[0] < before_ts, unpack_timeline('/Users/jonatanlinden/Documents/dedup_meas/kalkyl/memcont/malloc_memcpy/'+name, 3))], axis=0)
 
 def mem_move (dic0, dic1, cpudic, state, tid, to, fro):
     node = cpudic[state[tid]]
