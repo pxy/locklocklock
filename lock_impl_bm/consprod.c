@@ -19,12 +19,12 @@
 #endif
 
 // kalkyl freq
-//#define MHZ 2270
-//#define GHZ 2.270
+#define MHZ 2270
+#define GHZ 2.270
 
 // tintin freq
-#define MHZ 3000
-#define GHZ 3.000
+//#define MHZ 3000
+//#define GHZ 3.000
 
 //#define SLOPE 1 // constant service time
 #define SLOPE 1000 // service time slope increase by 1 microsec
@@ -135,7 +135,7 @@ run(void *_args)
  */
     printf("%d %d %d %d %d\n", args->tid, cnt, l_t, q_t, s_t);
 
-    print_proc_cx();
+//    print_proc_cx();
 
     return NULL;
 }
@@ -270,11 +270,11 @@ int main(int argc, char *argv[]){
     // stop experiment when time end (in cycles) is reached
     end = runtime * MHZ * 1000000L + read_tsc_p();
     // two different classes
-    classes[0].think_t = MHZ*think_c0;
-    classes[0].service_t = MHZ*serv_c0;
+    classes[0].think_t = think_c0;
+    classes[0].service_t = serv_c0;
 
-    classes[1].think_t = MHZ*think_c1;
-    classes[1].service_t = MHZ*serv_c1;
+    classes[1].think_t = think_c1;
+    classes[1].service_t = serv_c1;
 
     
 #ifdef PIN_THREADS

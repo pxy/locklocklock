@@ -64,11 +64,9 @@ asm_atomic_inc_int32(int32_t *var)
 #error Unsupported architecture
 #endif
 
-
 extern pid_t gettid (void);
+extern int getcoreid(void);
 
 extern void pin (pid_t t, int cpu);
-
-
 
 #endif

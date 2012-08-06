@@ -11,21 +11,23 @@
 #include <inttypes.h>
 #include <assert.h>
 #include <malloc.h>
-#include "clh.h"
+#include <libclh.h>
+
 #include "lock_mbm.h"
 #include "j_util.h"
+
 //#include "streamcluster.h"
 //#include "bodytrack.h"
-#include "bodytrack_eq_serv.h"
-//#include "fluidanimate.h"
+//#include "bodytrack_eq_serv.h"
+#include "fluidanimate.h"
 
 #if !defined (__linux__) || !defined(__GLIBC__)
 #error "OS must be linux."
 #endif
 
 #define DEBUG 0
-//#define NDEBUG  // no asserts
-//#define SAVE_TS 0
+#define NDEBUG  // no asserts
+//#define SAVE_TS 1
 #define PIN_THREADS
 
 // kalkyl freq
@@ -71,6 +73,7 @@ extern int servs[][2*NLGS];
 #define LOCK_IMPL(lockp, tid) clh_lock((clh_lock_t *) lockp, tid)
 #define UNLOCK_IMPL(lockp, tid) clh_unlock((clh_lock_t *) lockp, tid)
 
+
 //#define LOCK_IMPL(lockp, tid) p_lock(lockp, tid)
 //#define UNLOCK_IMPL(lockp, tid) p_unlock(lockp, tid)
 
@@ -90,18 +93,18 @@ init_lg(lockgroup_t *lg, int idx) {
     for (int i = 0; i < nlocks_lg[idx]; i++) {
 	clh_init(&lg->l[i], nthreads);
     }
-    dprintf("lg initialised.\n");
+    printf("lg %d initialised with %d locks.\n", idx, lg->nlocks);
 }
 
 void
 fini_lg(lockgroup_t *lg) {
+    free(lg->threads);
     for (int i = 0; i < lg->nlocks; i++) {
 	clh_destroy(&lg->l[i]);
     }
     free(lg->l);
 
 }
-
 
 void
 init_mb() {
@@ -113,6 +116,7 @@ init_mb() {
 	}
 	classes[i].rout = routs2[i];
     }
+
     printf("running with %d threads.\n", nthreads);
     
     for (int i = 0; i < NLGS; i++) {
@@ -146,6 +150,7 @@ int
 local_t (thread_args_t *ta, int lidx)
 {
     int p = ta->pos;
+    assert(p < NLGS);
     assert(ta->class_info.serv_m[2*p] > 0);
     return NEXT_L_T(ta->class_info.serv_m[2*p+1], ta->tid);
 }
@@ -213,7 +218,7 @@ run(void *_args)
             ;
 	unlock (lidx, args->tid);
 	/* END critical section */
-	dprintf("Tid %d finished lock unlock seq.", args->tid);
+	dprintf("Tid %d finished lock unlock seq.\n", args->tid);
     } while (read_tsc_p() < end);
     /* end of measured execution */
     return NULL;
@@ -360,7 +365,7 @@ main(int argc, char *argv[]){
 
     int old_i = 0;
     int class = 0;
-    printf("queue time : \n[[");
+    printf("queue_%d = [[", nthreads);
     for (int i = 0; i < nthreads; i++) {
 	for (int j = 0; j < NLGS; j++) {
 	    if (i + 1 - old_i >= class_nths[class]) {
@@ -389,7 +394,7 @@ main(int argc, char *argv[]){
 
     old_i = 0;
     class = 0;
-    printf("service time : \n [[");
+    printf("serv_%d = [[", nthreads);
     for (int i = 0; i < nthreads; i++) {
 	for (int j = 0; j < NLGS; j++) {
 	    if (i + 1 - old_i >= class_nths[class]) {
@@ -421,10 +426,11 @@ main(int argc, char *argv[]){
 
 
 /* free */
+    
 
     /* CLEANUP */
     free(current_ts);
-
+    
     for (int i = 0; i < nthreads; i++) {
 	gsl_rng_free(threads[i].rng);
 	free(threads[i].l_ts);
@@ -433,10 +439,7 @@ main(int argc, char *argv[]){
 	free(t_times);
 #endif
     }
-
     free(threads);
-
-
 #ifdef PIN_THREADS
     free(cpu_map);
 #endif 
@@ -451,8 +454,11 @@ pick_lock_lg(lockgroup_t *lg, thread_args_t *ta)
     //FIX select idx
     int idx = 0;
     if (lg->nlocks > 1) {
-	dprintf("lg nlocks > 1");
 	idx = gsl_rng_uniform_int (ta->rng, lg->nlocks);
+	//idx = gsl_ran_gaussian_ziggurat (ta->rng, 5);
+	//idx = fmin(fmax(0, idx+lg->nlocks/2), lg->nlocks - 1);
+	dprintf("idx inside lockgroup: %d\n", idx);
+	
     }
     lg->threads[ta->tid] = idx;
     return (void *) &lg->l[idx];

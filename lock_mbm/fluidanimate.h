@@ -2,7 +2,7 @@
 #define NCLASS 1
 #define NLGS   1
 
-int nlocks_lg[] = {1000};
+int nlocks_lg[] = {100};
     
 int init_pos[] = {0};
 
@@ -16,6 +16,7 @@ int routs[NCLASS][NLGS][2] = {
 /* service times for locks AND local computation times */
 int servs[NCLASS][2*NLGS] = {
     {
+//	13000, 7700000
 	5000, 100000
     },
 };
