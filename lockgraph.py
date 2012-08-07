@@ -1,5 +1,5 @@
 """SLAP-
-$ Time-stamp: <2012-04-13 14:51:38 jonatanlinden>
+$ Time-stamp: <2012-06-14 10:12:36 jonatanlinden>
 
 README:
 A collection of tools to do a queueing network analysis on sequences
@@ -43,6 +43,13 @@ class LockTrace(object):
         self.end   = max (self.end_ts())
         self.tl    = None
         self.classes = None
+        self.lock_oh = 0.0
+
+    def set_const_lock_overhead(cycles):
+        '''add a static lock overhead in cycles to the
+        service time of each lock access.
+        '''
+        self.lock_oh = cycles
 
     def start_ts(self):
         return zip(*elem_from_list_dic(self.tryD, 0))[1]
@@ -63,7 +70,7 @@ class LockTrace(object):
 
     def analyze(self):
         if self.classes:
-            r = multi_analyze(self.tryD, self.acqD, self.relD, self.namesD, self.classes)
+            r = multi_analyze(self.tryD, self.acqD, self.relD, self.namesD, self.classes, overhead = self.lock_oh)
             (self.rout_l, self.serv_rates, self.q_type, self.meas_wait, self.rout_cnt) = (r[0], r[1], r[3], r[4], r[6])
         else:
             # no classes defined, assume single class case
@@ -119,7 +126,11 @@ class LockTrace(object):
             n_acc = len(filter(lambda x: x[-1] == lock_id, merge_lists(self.tl)))
         return n_acc
 
-
+    def classes_from_matrix(self, mtx):
+        classes = []
+        for row in mtx:
+            classes.append([self.tryD.keys().index(m) for m in row])
+        self.set_classes(classes)
 
 # locktrace from a file
 class ParsedLockTrace(LockTrace):
@@ -146,9 +157,68 @@ class SubLockTrace(LockTrace):
         super(SubLockTrace, self).__init__(dict(tryD), dict(acqD), dict(relD), old_lt.namesD)
         # map old classes to new ones
         class_map = [map(lambda x: (old_lt.tryD.keys()[x], x), cl) for cl in old_lt.classes]
-        self.set_classes(filter_class(class_map, self.tryD))
+        self.set_classes(filter(None, filter_class(class_map, self.tryD)))
+        
 
 
+def streamcluster(threadstuple):
+    
+    #serv_M = ma.asarray([[248722, 45232],[350726, 60236]])
+
+    #serv_M = ma.asarray([[2514000, 151000],[3500000, 300000]])
+    serv_M = ma.asarray([[993824, 60288, ],
+    [1397572, 60455, ],
+    ])
+    
+    
+    rout = [[[1]],
+            [[1]]]
+             
+
+    qt = list(islice(cycle((1,0)), serv_M.shape[1]))
+    routL = map (lambda x: rout_insert_inter(normalizeRowWise(np.asarray(x))), rout)
+    
+    res = mva_multiclass (routL, 1./serv_M.T, threadstuple, qt)
+    print (res[0][1::2] - serv_M.T[1::2]).T
+
+    return res
+
+def bodytrack(threadstuple, serv):
+    #serv_M = ma.asarray([[0, 0, 0, 0, 6983544, 91465, 23131612, 171783],
+    #                     [340208, 21308, 230049, 18250, 83687, 35901, 0, 0],
+    #                     [0, 0, 0, 0, 0, 0, 22032093, 103155]])
+    serv_M = ma.asarray(serv)
+
+    rout = [
+        [[0, 0, 0, 0],
+         [0, 0, 0, 0],
+         [0, 0, 1, 1],
+         [0, 0, 1, 0]],
+         [[39, 1, 0, 0],
+          [0, 4, 1, 0],
+          [1, 0, 1, 0],
+          [0, 0, 0, 0]],
+        [[0, 0, 0, 0],
+         [0, 0, 0, 0],
+         [0, 0, 0, 0],
+         [0, 0, 0, 1]]
+         ]
+
+    qt = list(islice(cycle((1,0)), serv_M.shape[1]))
+    routL = map (lambda x: rout_insert_inter(normalizeRowWise(np.asarray(x))), rout)
+    res = mva_multiclass (routL, 1./serv_M.T, threadstuple, qt)
+    cont = (res[0][1::2] - serv_M.T[1::2]).T
+    print "%.0f %.0f %.0f" % (cont[1,0], cont[0,2], cont[2,3])
+
+    return res
+
+def rout_insert_inter(rMatrix):
+    size = rMatrix.shape[0]
+    r = np.zeros(shape=(size*2, size*2))
+    for i,row in enumerate(rMatrix):
+        r[2*i,2*i+1]  = 1 # the queue representing the interarrival time always routs into the lock q
+        r[(2*i+1),::2] = row # displace each routing by 1
+    return r
 
 def sub_lt_by_class(lt, cls, start=None):
     ls = idx(lt.classes[cls], lt.tryD.values())
@@ -226,13 +296,13 @@ def interval_analysis(lt, cls, lock, splitsize=None, inc=1, timechunk=None):
     return lt_list
 
 
-def unpack_timeline(f_name, n):
+def unpack_timeline(f_name, n, unit='q', unitsize=8):
     '''Unpacks a binary file containing 64-bit timestamps, in lots of n, skipping any zeroes.
     '''
     tl = []
     with open(f_name) as f:
-        for block in chunked(f, 8*n): # n times 64 bit
-            n_plus_1_tuple = struct.unpack(n*'q', block)
+        for block in chunked(f, unitsize*n): # n times 64 bit
+            n_plus_1_tuple = struct.unpack(n*unit, block)
             if n_plus_1_tuple[0] == 0:
                 if all(0 == e for e in n_plus_1_tuple[:n]): # sanity check
                     continue
@@ -241,6 +311,22 @@ def unpack_timeline(f_name, n):
             tl.append(n_plus_1_tuple[:n])
     return tl
 
+
+def est_wait_vs_meas_wait(lt, stage):
+
+    np.set_printoptions(suppress=True)
+    meas_cont = lt.meas_wait[:,stage]-lt.serv_times()[:,stage].filled(0)
+    est_cont  = (lt.est_wait[:,stage]-lt.serv_times()[:,stage]).filled(0)
+    
+    error = (meas_cont-est_cont)/meas_cont
+    print np.vstack((meas_cont, est_cont)).T
+    np.set_printoptions(precision=2)
+    print error
+    
+    
+
+def avg_malloc_memcpy(name, before_ts):
+    return np.average([(b-a, c-b) for (a,b,c) in takewhile(lambda x: x[0] < before_ts, unpack_timeline('/Users/jonatanlinden/Documents/dedup_meas/kalkyl/memcont/malloc_memcpy/'+name, 3))], axis=0)
 
 def mem_move (dic0, dic1, cpudic, state, tid, to, fro):
     node = cpudic[state[tid]]
@@ -548,14 +634,6 @@ def creationParse(file):
     return lockCreateList
 
 
-def creationParse(file):
-    lockCreateList = []
-    recReader = csv.reader (file, delimiter=' ', skipinitialspace=True)
-    for _row in recReader:
-        lockCreateList.append(_row[1])
-    return lockCreateList
-
-
 def waitingTimeParse (file):
     '''parse avg service times from a file on format "lockID avgTime".
     Returns a vector with position lockID having value avgTime
@@ -568,6 +646,43 @@ def waitingTimeParse (file):
         lidDict[lID] = time
     return dictToArray (lidDict)
 
+def parse_and_run_mva (filename, nclass):
+    '''parse service times from micro benchmark with one lock
+    '''
+    nlocks = 1
+    nthreads = 0
+    if nclass > 1:
+        serv_vec = [[],[]]
+        wait_vec = [[],[]]
+    else:
+        serv_vec = [[]]
+        wait_vec = [[]]
+        
+    with open(filename) as f:
+        recReader = csv.reader (f, delimiter=' ', skipinitialspace=True)
+        for _row in recReader:
+            tid = int(_row[0])
+            think_time = float(_row[2])
+            q_time = float(_row[3])
+            serv_time = float(_row[4])
+            serv_vec[tid % nclass].append([think_time, serv_time])
+            wait_vec[tid % nclass].append(serv_time+q_time)
+            nthreads += 1
+
+    n_per_c = nthreads
+    arr = np.asarray(serv_vec)
+    serv = np.average(arr, axis=1)
+    rout = np.eye(2)
+    routL = list(repeat(rout, nclass))
+    qt = list(islice(cycle((1,0)), nlocks*2))
+    serv_M = listOfArrToMtx(serv)
+    res = mva_multiclass (routL, 1./serv_M.T, tuple([n_per_c]*nclass), qt)
+    est_wait = res[0][1]
+    meas_wait = np.average(np.array(wait_vec), axis=1)
+    for i in xrange(nclass):
+        print "#CLASS NTHS MEAS_S EST_W MEAS_W OFFSET MEAS_TH" 
+        print "%d %d %.0f %.0f %.0f %.0f %.0f" % (i, nthreads, serv_M.T[1][i], est_wait[i], meas_wait[i], meas_wait[i]-est_wait[i], serv_M.T[0][i])
+    return res
 
 def lockDictFromRecords(recFile):
     '''Parses a record on the format "tsc tID lID" and returns a
