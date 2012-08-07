@@ -16,10 +16,14 @@
 #include "lock_mbm.h"
 #include "j_util.h"
 
+/*
+ * Select microbenchmark settings
+ */
+
 //#include "streamcluster.h"
-//#include "bodytrack.h"
+#include "bodytrack.h"
 //#include "bodytrack_eq_serv.h"
-#include "fluidanimate.h"
+//#include "fluidanimate.h"
 
 #if !defined (__linux__) || !defined(__GLIBC__)
 #error "OS must be linux."
@@ -27,8 +31,8 @@
 
 #define DEBUG 0
 #define NDEBUG  // no asserts
-//#define SAVE_TS 1
 #define PIN_THREADS
+//#define DETERM_ROUT 1
 
 // kalkyl freq
 #define MHZ 2270
@@ -41,9 +45,6 @@
 /* global vars */
 uint64_t end;
 /* one array of timestamp data for each thread */
-#ifdef SAVE_TS
-GArray **t_times;
-#endif
 time_info_t *current_ts;
 thread_args_t *threads;
 #ifdef PIN_THREADS
@@ -70,10 +71,9 @@ extern int servs[][2*NLGS];
 
 #define NEXT_CS_T(mu, tid) get_next_e(mu, tid)
 #define NEXT_L_T(mu, tid) get_next_e(mu, tid)
+
 #define LOCK_IMPL(lockp, tid) clh_lock((clh_lock_t *) lockp, tid)
 #define UNLOCK_IMPL(lockp, tid) clh_unlock((clh_lock_t *) lockp, tid)
-
-
 //#define LOCK_IMPL(lockp, tid) p_lock(lockp, tid)
 //#define UNLOCK_IMPL(lockp, tid) p_unlock(lockp, tid)
 
@@ -103,7 +103,6 @@ fini_lg(lockgroup_t *lg) {
 	clh_destroy(&lg->l[i]);
     }
     free(lg->l);
-
 }
 
 void
@@ -138,7 +137,7 @@ fini_mb() {
 
     for (int i = 0; i < NCLASS; i++) {
 	for (int j = 0; j < NLGS; j++) {
-//	    gsl_ran_discrete_free (routs2[i][j]);
+	    gsl_ran_discrete_free (routs2[i][j]);
 	}
     }
     for (int i = 0; i < NLGS; i++) {
@@ -168,14 +167,21 @@ select_lock (thread_args_t *ta)
 {
     int p = ta->pos;
     // if it's time to switch lock
-    dprintf("pos cnt : %d\n", ta->pos_cnt);
-    (ta->pos_cnt)--;
 
+#ifndef DETERM_ROUT
+    // jump randomly according to probs
+    ta->pos = gsl_ran_discrete (ta->rng, ta->class_info.rout[ta->pos]);
+    dprintf("pos cnt : %d\n", ta->pos_cnt);
+    
+#else
+    (ta->pos_cnt)--;
     if (0 >= ta->pos_cnt) {
 	ta->pos = ROUT_IDX(ta->class_info.rout_m,p,0);
 	ta->pos_cnt  = ROUT_IDX(ta->class_info.rout_m,ta->pos,1);
     }
     // otherwise, stay
+#endif
+    dprintf("new pos : %d\n", ta->pos);
     return ta->pos;
 }
 
@@ -290,17 +296,6 @@ main(int argc, char *argv[]){
     cpu_map    = (int*) malloc (sizeof(int)*nthreads);
 #endif
 
-
-
-#ifdef SAVE_TS
-    t_times    = (GArray **) malloc (sizeof (GArray *)*nthreads);
-    for (int i = 0; i < nthreads; i++)
-        t_times[i] = g_array_sized_new(FALSE, 
-				       TRUE, 
-				       sizeof (time_info_t), 
-				       runtime*5000);
-#endif
-
     /***** SETUP *****/
     // stop experiment when time end (in cycles) is reached
     end = runtime * MHZ * 1000000L + read_tsc_p();
@@ -357,11 +352,6 @@ main(int argc, char *argv[]){
     int64_t end = read_tsc_p();
 
     fprintf(stderr, "# total time: %ld\n", end - start);
-
-#ifdef SAVE_TS
-    save_arr();
-#endif
-
 
     int old_i = 0;
     int class = 0;
@@ -434,10 +424,7 @@ main(int argc, char *argv[]){
     for (int i = 0; i < nthreads; i++) {
 	gsl_rng_free(threads[i].rng);
 	free(threads[i].l_ts);
-#ifdef SAVE_TS
-	g_array_free(t_times[i], FALSE);
-	free(t_times);
-#endif
+
     }
     free(threads);
 #ifdef PIN_THREADS
@@ -484,10 +471,6 @@ lock(int lg_idx, thread_args_t *ta)
     ta->l_ts[lg_idx].c++;
     ta->l_ts[lg_idx].lc_t += start - current_ts[ta->tid].rel;
 
-#ifdef SAVE_TS    
-    current_ts[ta->tid].try = start;
-    current_ts[ta->tid].acq = end;
-#endif
 // FIX for serv time
     current_ts[ta->tid].acq = read_tsc_p();
 }
@@ -504,11 +487,6 @@ unlock(int lg_idx, int tid)
     threads[tid].l_ts[lg_idx].s_t += end - current_ts[tid].acq;
 
     current_ts[tid].rel = read_tsc_p();
-
-#ifdef SAVE_TS
-    current_ts[tid].lock = lg_idx;
-    g_array_append_val (t_times[tid], current_ts[tid]);
-#endif
 
 }
 
@@ -542,73 +520,6 @@ p_unlock(void *l, int tid)
 /* END pthread mutex wrappers */
 
 
-
-/* print collected data to files */
-void
-save_arr()
-{
-    time_info_t ti;
-    FILE *fp_try, *fp_acq, *fp_rel;    
-    char prefix[20];
-    char stry[30], sacq[30], srel[30];
-
-    snprintf (prefix, sizeof prefix, 
-	      "%s_%d", "output", 
-	      nthreads);
-    
-    strcpy (stry, prefix);
-    strcat (stry, "_try.dat");
-    if (NULL == (fp_try = fopen (stry, "w"))) {
-        perror("failed open file");
-        return;
-    }
-
-    strcpy (sacq, prefix);
-    strcat (sacq, "_acq.dat");
-    if (NULL == (fp_acq = fopen (sacq, "w"))) {
-        perror("failed open file");
-        return;
-    }
-
-    strcpy (srel, prefix);
-    strcat (srel, "_rel.dat");
-    if (NULL == (fp_rel = fopen (srel, "w"))) {
-        perror("failed open file");
-        return;
-    }
-#ifdef SAVE_TS
-    for (int i = 0; i < nthreads; i++) {
-        for (int j = 0; j < t_times[i]->len; j++) {
-            ti = g_array_index(t_times[i], time_info_t, j);
-            fprintf (fp_try, "%ld %d %d\n", ti.try, i, ti.lock);
-            fprintf (fp_acq, "%ld %d %d\n", ti.acq, i, ti.lock);
-            fprintf (fp_rel, "%ld %d %d\n", ti.rel, i, ti.lock);
-        }
-    }
-#endif
-
-
-    fclose(fp_try);
-    fclose(fp_acq);
-    fclose(fp_rel);
-}
-
-
-void
-print_proc_cx ()
-{
-    FILE *filePtr;
-    char sBuf[65536];
-    char *path = "/proc/self/status";
-    E_0(filePtr = fopen(path, "r"));
-
-    int n;
-    while ((n = fread(sBuf, 1, sizeof(sBuf), filePtr))) {
-	fwrite(sBuf, 1, n, stderr);
-    }
-
-    fclose (filePtr);
-}
 
 
 

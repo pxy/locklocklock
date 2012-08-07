@@ -2,6 +2,8 @@ CC         	= gcc
 CFLAGS     	= -Wall -std=c99 -pedantic `pkg-config --cflags --libs glib-2.0 gsl` -I$(HOME)/local/include
 LDLIBS     	= -pthread `pkg-config --libs glib-2.0 gsl` -L$(HOME)/local/lib -lclh
 
+debug: CC += -g -O1
+debug: all
 
 all: 		lock_mbm clh_test thread_placement
 #use implicit rules
